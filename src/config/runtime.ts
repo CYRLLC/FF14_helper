@@ -1,7 +1,8 @@
 import type { RuntimeConfig } from '../types'
 
 function buildDefaultRedirectUri(): string {
-  return new URL(`${import.meta.env.BASE_URL}oauth/callback.html`, window.location.origin).toString()
+  const documentUrl = window.location.href.split('#')[0]
+  return new URL('oauth/callback.html', documentUrl).toString()
 }
 
 function sanitizeString(value: unknown, fallback: string): string {
