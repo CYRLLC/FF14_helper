@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FF14 Helper OAuth Callback</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #101720;
+        color: #f4efe1;
+        font: 16px/1.5 "Noto Sans TC", sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <p>正在把授權結果送回 FF14 Helper...</p>
+    <script>
+      ;(() => {
+        if (window.opener && window.opener !== window) {
+          window.opener.postMessage(
+            {
+              type: 'ff14-helper-oauth-callback',
+              payload: {
+                search: window.location.search,
+                hash: window.location.hash,
+              },
+            },
+            window.location.origin,
+          )
+          window.close()
+        }
+      })()
+    </script>
+  </body>
+</html>
