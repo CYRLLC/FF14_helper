@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { createBackupArtifact, triggerArtifactDownload } from '../backup/archive'
 import {
   canUseDirectoryPicker,
@@ -8,6 +8,7 @@ import {
 import { scanSelectedEntries } from '../backup/scan'
 import { createGoogleDriveAdapter } from '../cloud/gdrive'
 import { createOneDriveAdapter } from '../cloud/onedrive'
+import { useSync } from '../sync/useSync'
 import type {
   BackupArtifact,
   BackupSourceSelection,
@@ -15,6 +16,7 @@ import type {
   CloudUploadResult,
   LocalFileEntry,
   RuntimeConfig,
+  SyncTarget,
 } from '../types'
 import { getErrorMessage } from '../utils/errors'
 import { formatBytes, formatDateTimeLabel } from '../utils/format'
@@ -27,6 +29,14 @@ function providerLabel(provider: CloudProviderId): string {
   return provider === 'onedrive' ? 'OneDrive' : 'Google Drive'
 }
 
+function targetLabel(target: SyncTarget): string {
+  if (target === 'download') {
+    return '本機下載'
+  }
+
+  return providerLabel(target)
+}
+
 function BackupPage({ config }: BackupPageProps) {
   const fallbackInputRef = useRef<HTMLInputElement>(null)
   const [selection, setSelection] = useState<BackupSourceSelection | null>(null)
@@ -37,6 +47,11 @@ function BackupPage({ config }: BackupPageProps) {
   const [uploadResult, setUploadResult] = useState<CloudUploadResult | null>(null)
   const [sourceMethod, setSourceMethod] = useState<'native' | 'fallback' | null>(null)
   const nativePickerSupported = canUseDirectoryPicker()
+  const { syncState, addHistory } = useSync()
+  const quickSyncDisabled =
+    Boolean(busyMessage) ||
+    (syncState.preferences.preferredTarget === 'onedrive' && !config.oneDriveClientId) ||
+    (syncState.preferences.preferredTarget === 'gdrive' && !config.googleClientId)
 
   useEffect(() => {
     const input = fallbackInputRef.current
@@ -53,7 +68,7 @@ function BackupPage({ config }: BackupPageProps) {
     loader: () => Promise<{ rootName: string; entries: LocalFileEntry[] }>,
     method: 'native' | 'fallback',
   ): Promise<void> {
-    setBusyMessage('正在讀取與分析 FF14 設定資料夾...')
+    setBusyMessage('正在讀取並分析 FF14 設定資料夾...')
     setErrorMessage(null)
     setDownloadedAt(null)
     setUploadResult(null)
@@ -84,7 +99,7 @@ function BackupPage({ config }: BackupPageProps) {
     await ingestSelection(() => pickDirectoryWithNativePicker(), 'native')
   }
 
-  async function handleFallbackChange(event: React.ChangeEvent<HTMLInputElement>): Promise<void> {
+  async function handleFallbackChange(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const { files } = event.target
 
     if (!files || files.length === 0) {
@@ -95,12 +110,25 @@ function BackupPage({ config }: BackupPageProps) {
     event.target.value = ''
   }
 
+  function recordDownload(nextArtifact: BackupArtifact): void {
+    addHistory({
+      createdAt: new Date().toISOString(),
+      eventType: 'downloaded',
+      target: 'download',
+      fileName: nextArtifact.fileName,
+      size: nextArtifact.size,
+      sourceRootName: nextArtifact.manifest.sourceRootName,
+      characterCount: nextArtifact.manifest.characterCount,
+    })
+  }
+
   function handleDownload(): void {
     if (!artifact) {
       return
     }
 
     triggerArtifactDownload(artifact)
+    recordDownload(artifact)
     setDownloadedAt(new Date().toISOString())
     setUploadResult(null)
     setErrorMessage(null)
@@ -123,6 +151,16 @@ function BackupPage({ config }: BackupPageProps) {
       const result = await adapter.upload(artifact)
       setUploadResult(result)
       setDownloadedAt(null)
+      addHistory({
+        createdAt: new Date().toISOString(),
+        eventType: 'uploaded',
+        target: provider,
+        fileName: artifact.fileName,
+        size: artifact.size,
+        sourceRootName: artifact.manifest.sourceRootName,
+        characterCount: artifact.manifest.characterCount,
+        remotePathLabel: result.remotePathLabel,
+      })
     } catch (error: unknown) {
       setUploadResult(null)
       setErrorMessage(getErrorMessage(error))
@@ -132,22 +170,57 @@ function BackupPage({ config }: BackupPageProps) {
     }
   }
 
+  async function handleQuickSync(): Promise<void> {
+    if (!artifact) {
+      return
+    }
+
+    const preferredTarget = syncState.preferences.preferredTarget
+
+    if (preferredTarget === 'download') {
+      handleDownload()
+      return
+    }
+
+    if (syncState.preferences.downloadBeforeCloudUpload) {
+      handleDownload()
+    }
+
+    await handleUpload(preferredTarget)
+  }
+
   return (
     <div className="page-grid">
       <section className="page-card">
         <div className="section-heading">
           <h2>備份助手</h2>
           <p>
-            預設路徑：
+            Windows 預設路徑:
             <code>%USERPROFILE%\Documents\My Games\FINAL FANTASY XIV - A Realm Reborn\</code>
           </p>
         </div>
 
         <div className="path-panel">
-          <p className="callout-title">操作原則</p>
+          <p className="callout-title">同步原則</p>
           <p className="callout-body">
-            只會打包 FF14 設定檔與角色資料夾，不會把整個 Documents 內容一起納入。
+            備份檔在瀏覽器內產生。你可以下載到本機，或直接上傳到自己的雲端，本站不保存內容。
           </p>
+        </div>
+
+        <div className="detail-list">
+          <div>
+            <strong>預設同步目標:</strong> {targetLabel(syncState.preferences.preferredTarget)}
+          </div>
+          <div>
+            <strong>雲端前先下載:</strong>{' '}
+            {syncState.preferences.downloadBeforeCloudUpload ? '是' : '否'}
+          </div>
+          <div>
+            <strong>瀏覽器能力:</strong>{' '}
+            {nativePickerSupported
+              ? '可使用原生資料夾選取 API。'
+              : '目前瀏覽器不支援原生資料夾選取，請改用回退模式。'}
+          </div>
         </div>
 
         <div className="button-row">
@@ -159,7 +232,7 @@ function BackupPage({ config }: BackupPageProps) {
             }}
             type="button"
           >
-            原生選取資料夾（推薦）
+            原生選取資料夾
           </button>
           <button
             className="button button--ghost"
@@ -167,7 +240,7 @@ function BackupPage({ config }: BackupPageProps) {
             onClick={() => fallbackInputRef.current?.click()}
             type="button"
           >
-            回退模式：手動選資料夾
+            回退模式選取
           </button>
         </div>
 
@@ -180,19 +253,6 @@ function BackupPage({ config }: BackupPageProps) {
           }}
           type="file"
         />
-
-        <div className="detail-list">
-          <div>
-            <strong>瀏覽器能力：</strong>
-            {nativePickerSupported
-              ? '已偵測到原生資料夾選取 API，可直接讀取資料夾結構。'
-              : '目前瀏覽器不支援原生資料夾選取，請改用回退模式。'}
-          </div>
-          <div>
-            <strong>雲端授權：</strong>
-            只有在你按下上傳時才會觸發，ZIP 建立與下載都在本機完成。
-          </div>
-        </div>
       </section>
 
       {(busyMessage || errorMessage || downloadedAt || uploadResult) && (
@@ -242,10 +302,10 @@ function BackupPage({ config }: BackupPageProps) {
           </div>
         </article>
         <article className="stat-card">
-          <div className="stat-label">資料來源</div>
+          <div className="stat-label">來源方式</div>
           <div className="stat-value">
             {sourceMethod === 'native'
-              ? '原生資料夾選取'
+              ? '原生資料夾'
               : sourceMethod === 'fallback'
                 ? '回退模式'
                 : '尚未選取'}
@@ -256,13 +316,13 @@ function BackupPage({ config }: BackupPageProps) {
       <section className="page-card">
         <div className="section-heading">
           <h2>備份摘要</h2>
-          <p>選取資料夾後，會先建立 ZIP 並顯示可下載或可上傳的備份檔。</p>
+          <p>選取資料夾後，網站會先建立 ZIP，然後你可以下載、快速同步或手動上傳。</p>
         </div>
 
         {!selection || !artifact ? (
           <div className="empty-state">
             <strong>尚未建立備份檔</strong>
-            <p>請先選取你的 FF14 設定資料夾。成功後會顯示掃描摘要與可執行動作。</p>
+            <p>請先選取 FF14 設定資料夾。成功後會在這裡顯示摘要與同步操作。</p>
           </div>
         ) : (
           <div className="page-grid">
@@ -295,7 +355,22 @@ function BackupPage({ config }: BackupPageProps) {
             </div>
 
             <div className="button-row">
-              <button className="button button--primary" onClick={handleDownload} type="button">
+              <button
+                className="button button--primary"
+                disabled={quickSyncDisabled}
+                onClick={() => {
+                  void handleQuickSync()
+                }}
+                type="button"
+              >
+                快速同步到 {targetLabel(syncState.preferences.preferredTarget)}
+              </button>
+              <button
+                className="button button--ghost"
+                disabled={Boolean(busyMessage)}
+                onClick={handleDownload}
+                type="button"
+              >
                 下載 ZIP
               </button>
               <button
@@ -329,6 +404,22 @@ function BackupPage({ config }: BackupPageProps) {
                   </li>
                 ))}
               </ul>
+            </div>
+
+            <div className="list-panel">
+              <p className="callout-title">最近同步紀錄</p>
+              {syncState.history.length === 0 ? (
+                <p className="muted">目前還沒有同步紀錄。</p>
+              ) : (
+                <ul>
+                  {syncState.history.slice(0, 3).map((entry) => (
+                    <li key={entry.id}>
+                      {formatDateTimeLabel(entry.createdAt)} | {targetLabel(entry.target)} |{' '}
+                      {entry.fileName}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         )}

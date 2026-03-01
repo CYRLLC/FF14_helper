@@ -5,8 +5,11 @@ function ToolsPage() {
     <div className="page-grid">
       <section className="page-card">
         <div className="section-heading">
-          <h2>工具導覽</h2>
-          <p>第一版先整理高價值外部工具，後續再挑選可內建的功能逐步整合。</p>
+          <h2>External Tools</h2>
+          <p>
+            These are the reference sites this project can learn from. The in-site tools focus on
+            the parts that still work well as a static, browser-only application.
+          </p>
         </div>
       </section>
 
@@ -20,11 +23,13 @@ function ToolsPage() {
             <p>{tool.description}</p>
             <div className="badge-row">
               <span className={tool.futureIntegration ? 'badge badge--positive' : 'badge'}>
-                {tool.futureIntegration ? '適合後續內建參考' : '以外部工具導流為主'}
+                {tool.futureIntegration
+                  ? 'Good candidate for in-site features'
+                  : 'Best kept as an external link'}
               </span>
             </div>
             <a className="tool-link" href={tool.url} rel="noreferrer" target="_blank">
-              前往工具站
+              Open Site
             </a>
           </article>
         ))}

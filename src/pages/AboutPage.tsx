@@ -10,13 +10,13 @@ function AboutPage({ config }: AboutPageProps) {
       <section className="page-card about-copy">
         <div className="section-heading">
           <h2>關於這個網站</h2>
-          <p>FF14 Helper 目前是靜態網站，不使用自架後端，所有備份都在你的瀏覽器內處理。</p>
+          <p>FF14 Helper 是純前端網站。備份、同步偏好與最近紀錄都以瀏覽器端為主，不存到本站。</p>
         </div>
         <ul>
-          <li>選取資料夾後，網站只會讀取 allowlist 內的 FF14 設定檔。</li>
-          <li>下載 ZIP 時資料只在本機產生，不會傳到本站。</li>
-          <li>只有你主動按下雲端上傳時，才會啟動對應雲端授權流程。</li>
-          <li>主機版備份與更多資訊整合功能會留到後續版本。</li>
+          <li>選取資料夾後只會讀取 FF14 設定相關檔案，不會整包掃描你的 Documents。</li>
+          <li>下載 ZIP 時資料只在本機產生。</li>
+          <li>上傳到雲端時會直接由瀏覽器連到 OneDrive 或 Google Drive。</li>
+          <li>同步中心只保存偏好與操作紀錄摘要，不保存實際備份檔內容。</li>
         </ul>
       </section>
 
@@ -45,13 +45,14 @@ function AboutPage({ config }: AboutPageProps) {
 
       <section className="page-card about-copy">
         <div className="section-heading">
-          <h2>部署前要完成的事</h2>
-          <p>GitHub Pages 可直接部署，但要先把公開的 OAuth Client ID 填進 runtime-config.json。</p>
+          <h2>下一步可擴充</h2>
+          <p>目前已把同步骨架放進站內，之後可以繼續延伸更多不依賴伺服器的小功能。</p>
         </div>
         <ul>
-          <li>Microsoft Entra App Registration：將 redirect URI 指向 `oauth/callback.html`。</li>
-          <li>Google Cloud OAuth Client：同樣將 redirect URI 指向 `oauth/callback.html`。</li>
-          <li>若 repo 名稱改變，請同步更新 `VITE_BASE_PATH` 或 `vite.config.ts` 的 base 設定。</li>
+          <li>還原教學與設定比對頁</li>
+          <li>雲端備份清單掃描</li>
+          <li>Gold Saucer / GATE 參考頁</li>
+          <li>市場資料與道具查詢功能</li>
         </ul>
       </section>
     </div>

@@ -8,22 +8,34 @@ function HomePage({ appName }: HomePageProps) {
   return (
     <div className="page-grid">
       <section className="hero-card">
-        <p className="eyebrow">FF14 小幫手</p>
+        <p className="eyebrow">FF14 Helper</p>
         <h2>{appName}</h2>
         <p className="lead">
-          第一版聚焦在個人設定備份，把最常遺漏但最痛的事情先變成一個 3 分鐘能完成的流程。
+          A browser-first toolkit for backing up FF14 settings, inspecting backup ZIP files,
+          searching reference data, and keeping sync preferences locally on the device.
         </p>
         <div className="badge-row">
-          <span className="badge badge--positive">純前端，不經過本站伺服器</span>
-          <span className="badge badge--warning">Windows / Chromium 體驗最佳</span>
-          <span className="badge">GitHub Pages 可部署</span>
+          <span className="badge">Work in Progress</span>
+          <span className="badge badge--positive">No server-side storage</span>
+          <span className="badge badge--warning">Best on Windows + Chromium</span>
+          <span className="badge">Expandable multi-tool foundation</span>
+        </div>
+        <div className="callout">
+          <span className="callout-title">Project Status</span>
+          <span className="callout-body">
+            This is an active public project. Core backup features work now, and more FF14 helper
+            tools are being added in ongoing updates.
+          </span>
         </div>
         <div className="button-row">
           <Link className="button button--primary" to="/backup">
-            開始備份
+            Start Backup
           </Link>
-          <Link className="button button--ghost" to="/tools">
-            查看工具導覽
+          <Link className="button button--ghost" to="/restore">
+            Inspect a Backup ZIP
+          </Link>
+          <Link className="button button--ghost" to="/lab">
+            Open Helper Lab
           </Link>
         </div>
       </section>
@@ -31,20 +43,20 @@ function HomePage({ appName }: HomePageProps) {
       <section className="feature-grid">
         <article className="page-card">
           <div className="section-heading">
-            <h2>本機設定打包</h2>
-            <p>針對 FF14 設定資料夾做 allowlist 篩選，避免誤把整個 Documents 一起打包。</p>
+            <h2>Backup</h2>
+            <p>Create ZIP backups in the browser and optionally upload them to your own cloud.</p>
           </div>
         </article>
         <article className="page-card">
           <div className="section-heading">
-            <h2>雙雲端上傳</h2>
-            <p>ZIP 檔先在本機建立，只有在你主動點擊上傳時才會進行雲端授權。</p>
+            <h2>Restore Inspector</h2>
+            <p>Open an existing backup ZIP and inspect the manifest before doing a manual restore.</p>
           </div>
         </article>
         <article className="page-card">
           <div className="section-heading">
-            <h2>擴充骨架已留好</h2>
-            <p>後續可繼續加上 Gold Saucer / GATE 參考頁、工具聚合與資料查詢功能。</p>
+            <h2>Helper Lab</h2>
+            <p>Search XIVAPI data and run marketboard math inspired by common FF14 helper sites.</p>
           </div>
         </article>
       </section>

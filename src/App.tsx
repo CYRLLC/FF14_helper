@@ -4,15 +4,22 @@ import { loadRuntimeConfig } from './config/runtime'
 import AboutPage from './pages/AboutPage'
 import BackupPage from './pages/BackupPage'
 import HomePage from './pages/HomePage'
+import LabPage from './pages/LabPage'
+import RestorePage from './pages/RestorePage'
+import SyncPage from './pages/SyncPage'
 import ToolsPage from './pages/ToolsPage'
+import { SyncProvider } from './sync/SyncContext'
 import type { RuntimeConfig } from './types'
 import { getErrorMessage } from './utils/errors'
 
 const navItems = [
-  { label: '首頁', to: '/' },
-  { label: '備份助手', to: '/backup' },
-  { label: '工具導覽', to: '/tools' },
-  { label: '關於', to: '/about' },
+  { label: 'Home', to: '/' },
+  { label: 'Backup', to: '/backup' },
+  { label: 'Restore', to: '/restore' },
+  { label: 'Lab', to: '/lab' },
+  { label: 'Sync', to: '/sync' },
+  { label: 'Tools', to: '/tools' },
+  { label: 'About', to: '/about' },
 ]
 
 function App() {
@@ -43,7 +50,7 @@ function App() {
     return (
       <div className="app-shell">
         <div className="status-panel status-panel--error">
-          <h1>無法載入網站設定</h1>
+          <h1>Unable to load site configuration</h1>
           <p>{loadError}</p>
         </div>
       </div>
@@ -55,7 +62,7 @@ function App() {
       <div className="app-shell">
         <div className="status-panel">
           <h1>FF14 Helper</h1>
-          <p>正在載入網站設定與雲端上傳參數...</p>
+          <p>Loading runtime settings and cloud provider configuration...</p>
         </div>
       </div>
     )
@@ -63,40 +70,45 @@ function App() {
 
   return (
     <HashRouter>
-      <div className="app-shell">
-        <header className="site-header">
-          <div className="brand-lockup">
-            <p className="eyebrow">Windows 設定備份助手</p>
-            <h1>{config.appName}</h1>
-            <p className="subtitle">
-              在瀏覽器內完成 FF14 個人設定打包，並支援 OneDrive / Google Drive 直傳。
-            </p>
-          </div>
-          <nav className="site-nav" aria-label="主要導覽">
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                className={({ isActive }) =>
-                  isActive ? 'nav-link nav-link--active' : 'nav-link'
-                }
-                end={item.to === '/'}
-                to={item.to}
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
-        </header>
+      <SyncProvider>
+        <div className="app-shell">
+          <header className="site-header">
+            <div className="brand-lockup">
+              <p className="eyebrow">Browser-only FF14 Helper</p>
+              <h1>{config.appName}</h1>
+              <p className="subtitle">
+                Backup, inspect, search, and sync from the browser without site-side storage.
+              </p>
+            </div>
+            <nav className="site-nav" aria-label="Primary navigation">
+              {navItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  className={({ isActive }) =>
+                    isActive ? 'nav-link nav-link--active' : 'nav-link'
+                  }
+                  end={item.to === '/'}
+                  to={item.to}
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </nav>
+          </header>
 
-        <main className="page-shell">
-          <Routes>
-            <Route path="/" element={<HomePage appName={config.appName} />} />
-            <Route path="/backup" element={<BackupPage config={config} />} />
-            <Route path="/tools" element={<ToolsPage />} />
-            <Route path="/about" element={<AboutPage config={config} />} />
-          </Routes>
-        </main>
-      </div>
+          <main className="page-shell">
+            <Routes>
+              <Route path="/" element={<HomePage appName={config.appName} />} />
+              <Route path="/backup" element={<BackupPage config={config} />} />
+              <Route path="/restore" element={<RestorePage />} />
+              <Route path="/lab" element={<LabPage />} />
+              <Route path="/sync" element={<SyncPage />} />
+              <Route path="/tools" element={<ToolsPage />} />
+              <Route path="/about" element={<AboutPage config={config} />} />
+            </Routes>
+          </main>
+        </div>
+      </SyncProvider>
     </HashRouter>
   )
 }

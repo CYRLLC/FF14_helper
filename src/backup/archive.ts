@@ -1,4 +1,4 @@
-import { strToU8, zipSync } from 'fflate'
+import JSZip from 'jszip'
 import type { BackupArtifact, BackupManifest, BackupSourceSelection } from '../types'
 
 function pad(value: number): string {
@@ -37,19 +37,21 @@ export async function createBackupArtifact(
   now = new Date(),
 ): Promise<BackupArtifact> {
   const manifest = buildBackupManifest(selection, version, now.toISOString())
-  const archiveMap: Record<string, Uint8Array> = {
-    'backup-manifest.json': strToU8(JSON.stringify(manifest, null, 2)),
-  }
+  const archive = new JSZip()
+  archive.file('backup-manifest.json', JSON.stringify(manifest, null, 2))
 
   for (const entry of selection.entries) {
     const file = await entry.getFile()
-    archiveMap[entry.relativePath] = new Uint8Array(await file.arrayBuffer())
+    archive.file(entry.relativePath, await file.arrayBuffer())
   }
 
-  const zipped = zipSync(archiveMap, { level: 6 })
-  const safeBuffer = new ArrayBuffer(zipped.byteLength)
-  new Uint8Array(safeBuffer).set(zipped)
-  const blob = new Blob([safeBuffer], { type: 'application/zip' })
+  const blob = await archive.generateAsync({
+    type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: {
+      level: 6,
+    },
+  })
 
   return {
     fileName: createBackupFileName(now),

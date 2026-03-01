@@ -1,4 +1,6 @@
 export type CloudProviderId = 'onedrive' | 'gdrive'
+export type SyncTarget = 'download' | CloudProviderId
+export type SyncEventType = 'downloaded' | 'uploaded'
 
 export interface LocalFileEntry {
   relativePath: string
@@ -66,4 +68,36 @@ export interface ToolDirectoryEntry {
   description: string
   url: string
   futureIntegration: boolean
+}
+
+export interface SyncPreferences {
+  preferredTarget: SyncTarget
+  downloadBeforeCloudUpload: boolean
+  keepHistory: boolean
+  maxHistory: number
+}
+
+export interface SyncHistoryEntry {
+  id: string
+  createdAt: string
+  eventType: SyncEventType
+  target: SyncTarget
+  fileName: string
+  size: number
+  sourceRootName: string
+  characterCount: number
+  remotePathLabel?: string
+}
+
+export interface SyncState {
+  preferences: SyncPreferences
+  history: SyncHistoryEntry[]
+  importedAt: string | null
+}
+
+export interface RestoreInspection {
+  fileName: string
+  size: number
+  entries: string[]
+  manifest: BackupManifest | null
 }
