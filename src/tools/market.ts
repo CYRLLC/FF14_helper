@@ -28,6 +28,26 @@ export interface TwServerComparison {
   cheaperTotalStock: number
 }
 
+export interface MarketWorkbookRow {
+  id: string
+  itemName: string
+  chocoboPrice: number
+  mooglePrice: number
+  quantity: number
+  note: string
+}
+
+export interface MarketWorkbookSummary {
+  chocoboTotal: number
+  moogleTotal: number
+  mixedCheapestTotal: number
+  savingsVsChocobo: number
+  savingsVsMoogle: number
+  cheaperOnChocobo: number
+  cheaperOnMoogle: number
+  equalPriceItems: number
+}
+
 function clampNumber(value: number, minimum = 0): number {
   if (!Number.isFinite(value)) {
     return minimum
@@ -36,9 +56,18 @@ function clampNumber(value: number, minimum = 0): number {
   return Math.max(minimum, value)
 }
 
-export function calculateMarketboardSummary(
-  inputs: MarketboardInputs,
-): MarketboardSummary {
+export function sanitizeWorkbookRow(row: MarketWorkbookRow): MarketWorkbookRow {
+  return {
+    ...row,
+    itemName: row.itemName.trim(),
+    chocoboPrice: clampNumber(row.chocoboPrice),
+    mooglePrice: clampNumber(row.mooglePrice),
+    quantity: Math.max(1, Math.round(clampNumber(row.quantity, 1))),
+    note: row.note.trim(),
+  }
+}
+
+export function calculateMarketboardSummary(inputs: MarketboardInputs): MarketboardSummary {
   const listingPrice = clampNumber(inputs.listingPrice)
   const quantity = Math.max(1, Math.round(clampNumber(inputs.quantity, 1)))
   const taxRatePercent = clampNumber(inputs.taxRatePercent)
@@ -91,5 +120,43 @@ export function compareTwServerPrices(inputs: TwServerPriceInput[]): TwServerCom
     priceSpread: Math.max(0, expensive.pricePerUnit - cheaper.pricePerUnit),
     averagePrice,
     cheaperTotalStock: cheaper.quantity,
+  }
+}
+
+export function buildWorkbookSummary(rows: MarketWorkbookRow[]): MarketWorkbookSummary {
+  let chocoboTotal = 0
+  let moogleTotal = 0
+  let mixedCheapestTotal = 0
+  let cheaperOnChocobo = 0
+  let cheaperOnMoogle = 0
+  let equalPriceItems = 0
+
+  for (const rawRow of rows) {
+    const row = sanitizeWorkbookRow(rawRow)
+    const chocoboCost = row.chocoboPrice * row.quantity
+    const moogleCost = row.mooglePrice * row.quantity
+
+    chocoboTotal += chocoboCost
+    moogleTotal += moogleCost
+    mixedCheapestTotal += Math.min(chocoboCost, moogleCost)
+
+    if (row.chocoboPrice < row.mooglePrice) {
+      cheaperOnChocobo += 1
+    } else if (row.chocoboPrice > row.mooglePrice) {
+      cheaperOnMoogle += 1
+    } else {
+      equalPriceItems += 1
+    }
+  }
+
+  return {
+    chocoboTotal,
+    moogleTotal,
+    mixedCheapestTotal,
+    savingsVsChocobo: Math.max(0, chocoboTotal - mixedCheapestTotal),
+    savingsVsMoogle: Math.max(0, moogleTotal - mixedCheapestTotal),
+    cheaperOnChocobo,
+    cheaperOnMoogle,
+    equalPriceItems,
   }
 }

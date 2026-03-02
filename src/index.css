@@ -35,7 +35,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -477,7 +478,9 @@ button {
 }
 
 .choice-row,
-.treasure-card-grid {
+.treasure-card-grid,
+.route-list,
+.party-member-grid {
   display: grid;
   gap: 0.8rem;
 }
@@ -617,6 +620,10 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
+.party-member-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
 .treasure-card {
   display: grid;
   gap: 0.8rem;
@@ -629,6 +636,11 @@ button {
 .treasure-card--active {
   border-color: rgba(246, 189, 82, 0.35);
   background: rgba(246, 189, 82, 0.08);
+}
+
+.treasure-card--done {
+  border-color: rgba(99, 211, 177, 0.28);
+  background: rgba(99, 211, 177, 0.08);
 }
 
 .treasure-card__meta {

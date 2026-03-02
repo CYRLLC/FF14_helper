@@ -1,30 +1,54 @@
 import { useEffect, useMemo, useState } from 'react'
 import { pageSources } from '../catalog/sources'
 import SourceAttribution from '../components/SourceAttribution'
-import { calculateMarketboardSummary, compareTwServerPrices } from '../tools/market'
+import {
+  buildWorkbookSummary,
+  calculateMarketboardSummary,
+  compareTwServerPrices,
+  sanitizeWorkbookRow,
+  type MarketWorkbookRow,
+} from '../tools/market'
 import { formatGil, formatShortDateTime } from '../tools/marketFormat'
 
-const MARKET_FORM_KEY = 'ff14-helper.market.tw-form'
+const MARKET_WORKBOOK_KEY = 'ff14-helper.market.workbook'
 
-interface SavedMarketState {
-  itemLabel: string
-  chocoboPrice: number
-  chocoboQuantity: number
-  mooglePrice: number
-  moogleQuantity: number
+interface MarketWorkbookState {
+  rows: MarketWorkbookRow[]
+  calculatorRowId: string | null
   listingPrice: number
   quantity: number
   taxRatePercent: number
   unitCost: number
 }
 
-function getDefaultState(): SavedMarketState {
+function createRowId(): string {
+  return `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function createEmptyRow(): MarketWorkbookRow {
   return {
-    itemLabel: '',
-    chocoboPrice: 1200,
-    chocoboQuantity: 10,
-    mooglePrice: 1350,
-    moogleQuantity: 12,
+    id: createRowId(),
+    itemName: '',
+    chocoboPrice: 0,
+    mooglePrice: 0,
+    quantity: 1,
+    note: '',
+  }
+}
+
+function getDefaultState(): MarketWorkbookState {
+  return {
+    rows: [
+      {
+        id: createRowId(),
+        itemName: '魔匠水藥',
+        chocoboPrice: 1200,
+        mooglePrice: 1350,
+        quantity: 3,
+        note: '',
+      },
+    ],
+    calculatorRowId: null,
     listingPrice: 1200,
     quantity: 1,
     taxRatePercent: 5,
@@ -32,26 +56,37 @@ function getDefaultState(): SavedMarketState {
   }
 }
 
-function loadSavedState(): SavedMarketState {
+function loadSavedState(): MarketWorkbookState {
   if (typeof window === 'undefined') {
     return getDefaultState()
   }
 
   try {
-    const raw = window.localStorage.getItem(MARKET_FORM_KEY)
+    const raw = window.localStorage.getItem(MARKET_WORKBOOK_KEY)
 
     if (!raw) {
       return getDefaultState()
     }
 
-    const parsed = JSON.parse(raw) as Partial<SavedMarketState>
+    const parsed = JSON.parse(raw) as Partial<MarketWorkbookState>
+    const rows = Array.isArray(parsed.rows)
+      ? parsed.rows
+          .filter((row): row is MarketWorkbookRow => Boolean(row && typeof row === 'object'))
+          .map((row) =>
+            sanitizeWorkbookRow({
+              id: typeof row.id === 'string' ? row.id : createRowId(),
+              itemName: typeof row.itemName === 'string' ? row.itemName : '',
+              chocoboPrice: Number(row.chocoboPrice ?? 0),
+              mooglePrice: Number(row.mooglePrice ?? 0),
+              quantity: Number(row.quantity ?? 1),
+              note: typeof row.note === 'string' ? row.note : '',
+            }),
+          )
+      : getDefaultState().rows
 
     return {
-      itemLabel: typeof parsed.itemLabel === 'string' ? parsed.itemLabel : '',
-      chocoboPrice: Number(parsed.chocoboPrice ?? 1200),
-      chocoboQuantity: Number(parsed.chocoboQuantity ?? 10),
-      mooglePrice: Number(parsed.mooglePrice ?? 1350),
-      moogleQuantity: Number(parsed.moogleQuantity ?? 12),
+      rows: rows.length > 0 ? rows : getDefaultState().rows,
+      calculatorRowId: typeof parsed.calculatorRowId === 'string' ? parsed.calculatorRowId : null,
       listingPrice: Number(parsed.listingPrice ?? 1200),
       quantity: Number(parsed.quantity ?? 1),
       taxRatePercent: Number(parsed.taxRatePercent ?? 5),
@@ -68,63 +103,59 @@ function formatNumber(value: number): string {
   }).format(value)
 }
 
+function parseBulkRows(rawValue: string): MarketWorkbookRow[] {
+  return rawValue
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [itemName = '', chocobo = '0', moogle = '0', quantity = '1', note = ''] = line
+        .split('\t')
+        .map((part) => part.trim())
+
+      return sanitizeWorkbookRow({
+        id: createRowId(),
+        itemName,
+        chocoboPrice: Number(chocobo),
+        mooglePrice: Number(moogle),
+        quantity: Number(quantity),
+        note,
+      })
+    })
+    .filter((row) => row.itemName.length > 0)
+}
+
 function MarketPage() {
   const [savedState] = useState(() => loadSavedState())
-  const [itemLabel, setItemLabel] = useState(savedState.itemLabel)
-  const [chocoboPrice, setChocoboPrice] = useState(savedState.chocoboPrice)
-  const [chocoboQuantity, setChocoboQuantity] = useState(savedState.chocoboQuantity)
-  const [mooglePrice, setMooglePrice] = useState(savedState.mooglePrice)
-  const [moogleQuantity, setMoogleQuantity] = useState(savedState.moogleQuantity)
+  const [rows, setRows] = useState<MarketWorkbookRow[]>(savedState.rows)
+  const [calculatorRowId, setCalculatorRowId] = useState<string | null>(savedState.calculatorRowId)
   const [listingPrice, setListingPrice] = useState(savedState.listingPrice)
   const [quantity, setQuantity] = useState(savedState.quantity)
   const [taxRatePercent, setTaxRatePercent] = useState(savedState.taxRatePercent)
   const [unitCost, setUnitCost] = useState(savedState.unitCost)
-  const [lastAppliedServer, setLastAppliedServer] = useState<'陸行鳥' | '莫古力'>('陸行鳥')
+  const [draftRow, setDraftRow] = useState<MarketWorkbookRow>(() => createEmptyRow())
+  const [bulkInput, setBulkInput] = useState('')
+  const [message, setMessage] = useState<string | null>(null)
 
   useEffect(() => {
     window.localStorage.setItem(
-      MARKET_FORM_KEY,
+      MARKET_WORKBOOK_KEY,
       JSON.stringify({
-        itemLabel,
-        chocoboPrice,
-        chocoboQuantity,
-        mooglePrice,
-        moogleQuantity,
+        rows,
+        calculatorRowId,
         listingPrice,
         quantity,
         taxRatePercent,
         unitCost,
       }),
     )
-  }, [
-    chocoboPrice,
-    chocoboQuantity,
-    itemLabel,
-    listingPrice,
-    mooglePrice,
-    moogleQuantity,
-    quantity,
-    taxRatePercent,
-    unitCost,
-  ])
+  }, [calculatorRowId, listingPrice, quantity, rows, taxRatePercent, unitCost])
 
-  const comparison = useMemo(
-    () =>
-      compareTwServerPrices([
-        {
-          serverName: '陸行鳥',
-          pricePerUnit: chocoboPrice,
-          quantity: chocoboQuantity,
-        },
-        {
-          serverName: '莫古力',
-          pricePerUnit: mooglePrice,
-          quantity: moogleQuantity,
-        },
-      ]),
-    [chocoboPrice, chocoboQuantity, mooglePrice, moogleQuantity],
+  const workbookSummary = useMemo(() => buildWorkbookSummary(rows), [rows])
+  const selectedCalculatorRow = useMemo(
+    () => rows.find((row) => row.id === calculatorRowId) ?? null,
+    [calculatorRowId, rows],
   )
-
   const marketSummary = useMemo(
     () =>
       calculateMarketboardSummary({
@@ -136,80 +167,132 @@ function MarketPage() {
     [listingPrice, quantity, taxRatePercent, unitCost],
   )
 
-  function applyListingPrice(serverName: '陸行鳥' | '莫古力'): void {
-    if (serverName === '陸行鳥') {
-      setListingPrice(chocoboPrice)
-    } else {
-      setListingPrice(mooglePrice)
-    }
-
-    setLastAppliedServer(serverName)
+  function updateRow(rowId: string, patch: Partial<MarketWorkbookRow>): void {
+    setRows((currentRows) =>
+      currentRows.map((row) =>
+        row.id === rowId
+          ? sanitizeWorkbookRow({
+              ...row,
+              ...patch,
+            })
+          : row,
+      ),
+    )
   }
 
-  function applyCheaperPrice(): void {
-    const cheaperServer = comparison.cheaperServer === '莫古力' ? '莫古力' : '陸行鳥'
-    applyListingPrice(cheaperServer)
+  function addDraftRow(): void {
+    if (!draftRow.itemName.trim()) {
+      setMessage('請先填入道具名稱。')
+      return
+    }
+
+    const nextRow = sanitizeWorkbookRow({
+      ...draftRow,
+      id: createRowId(),
+    })
+
+    setRows((currentRows) => [...currentRows, nextRow])
+    setDraftRow(createEmptyRow())
+    setMessage('已加入比價清單。')
+  }
+
+  function importBulkRows(): void {
+    const parsedRows = parseBulkRows(bulkInput)
+
+    if (parsedRows.length === 0) {
+      setMessage('沒有可匯入的資料列。請使用 Tab 分隔：道具、陸行鳥、莫古力、數量、備註。')
+      return
+    }
+
+    setRows((currentRows) => [...currentRows, ...parsedRows])
+    setBulkInput('')
+    setMessage(`已匯入 ${parsedRows.length} 筆資料。`)
+  }
+
+  function removeRow(rowId: string): void {
+    setRows((currentRows) => currentRows.filter((row) => row.id !== rowId))
+    setCalculatorRowId((currentRowId) => (currentRowId === rowId ? null : currentRowId))
+  }
+
+  function clearRows(): void {
+    setRows([])
+    setCalculatorRowId(null)
+    setMessage('已清空比價清單。')
+  }
+
+  function applyRowToCalculator(row: MarketWorkbookRow, preferred: 'cheaper' | 'chocobo' | 'moogle'): void {
+    const sanitized = sanitizeWorkbookRow(row)
+    const comparison = compareTwServerPrices([
+      {
+        serverName: '陸行鳥',
+        pricePerUnit: sanitized.chocoboPrice,
+        quantity: sanitized.quantity,
+      },
+      {
+        serverName: '莫古力',
+        pricePerUnit: sanitized.mooglePrice,
+        quantity: sanitized.quantity,
+      },
+    ])
+
+    let nextPrice = sanitized.chocoboPrice
+
+    if (preferred === 'moogle') {
+      nextPrice = sanitized.mooglePrice
+    } else if (preferred === 'cheaper' && comparison.cheaperServer === '莫古力') {
+      nextPrice = sanitized.mooglePrice
+    }
+
+    setCalculatorRowId(row.id)
+    setListingPrice(nextPrice)
+    setQuantity(sanitized.quantity)
+    setMessage(`已將「${sanitized.itemName || '未命名道具'}」帶入市場板試算。`)
   }
 
   return (
     <div className="page-grid">
       <section className="hero-card">
-        <p className="eyebrow">Market</p>
-        <h2>繁中服查價工作台</h2>
+        <p className="eyebrow">繁中服查價</p>
+        <h2>雙服比價工作表</h2>
         <p className="lead">
-          這一頁只針對繁中伺服器。你可以手動整理陸行鳥與莫古力的價格與庫存，快速比較價差，
-          再把較適合的價格套進市場板試算。本站不保存你的查價內容到伺服器。
+          這一頁改成更接近繁中服查價站的使用方式，適合一次整理多個道具，快速比較陸行鳥與莫古力
+          的價差、購買總額與建議購買方向。價格仍由你自行輸入，資料只留在瀏覽器。
         </p>
         <div className="badge-row">
-          <span className="badge badge--positive">限定繁中服</span>
+          <span className="badge badge--positive">只做繁中服</span>
           <span className="badge">陸行鳥 / 莫古力</span>
-          <span className="badge badge--warning">價格資料由你手動輸入</span>
+          <span className="badge badge--warning">靈感來自 FFXIV Market (beherw)</span>
         </div>
       </section>
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>手動比價</h2>
-          <p>
-            可先在外部工具確認價格，再把你要比較的資訊填進來。本站只負責整理、比較與試算，
-            不宣稱提供即時繁中服 API。
-          </p>
+          <h2>新增比價項目</h2>
+          <p>你可以單筆新增，也可以直接貼上多行資料。每行請用 Tab 分隔欄位。</p>
         </div>
 
         <div className="field-grid">
           <label className="field">
-            <span className="field-label">道具名稱或備註</span>
+            <span className="field-label">道具名稱</span>
             <input
               className="input-text"
-              onChange={(event) => setItemLabel(event.target.value)}
-              placeholder="例如：魔匠水藥、料理、素材"
+              onChange={(event) => setDraftRow((current) => ({ ...current, itemName: event.target.value }))}
+              placeholder="例如：魔匠水藥"
               type="text"
-              value={itemLabel}
+              value={draftRow.itemName}
             />
           </label>
-        </div>
-
-        <div className="field-grid">
           <label className="field">
             <span className="field-label">陸行鳥單價</span>
             <input
               className="input-text"
               min="0"
-              onChange={(event) => setChocoboPrice(Number(event.target.value))}
+              onChange={(event) =>
+                setDraftRow((current) => ({ ...current, chocoboPrice: Number(event.target.value) }))
+              }
               step="1"
               type="number"
-              value={chocoboPrice}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">陸行鳥庫存</span>
-            <input
-              className="input-text"
-              min="0"
-              onChange={(event) => setChocoboQuantity(Number(event.target.value))}
-              step="1"
-              type="number"
-              value={chocoboQuantity}
+              value={draftRow.chocoboPrice}
             />
           </label>
           <label className="field">
@@ -217,34 +300,42 @@ function MarketPage() {
             <input
               className="input-text"
               min="0"
-              onChange={(event) => setMooglePrice(Number(event.target.value))}
+              onChange={(event) =>
+                setDraftRow((current) => ({ ...current, mooglePrice: Number(event.target.value) }))
+              }
               step="1"
               type="number"
-              value={mooglePrice}
+              value={draftRow.mooglePrice}
             />
           </label>
           <label className="field">
-            <span className="field-label">莫古力庫存</span>
+            <span className="field-label">預計購買數量</span>
             <input
               className="input-text"
-              min="0"
-              onChange={(event) => setMoogleQuantity(Number(event.target.value))}
+              min="1"
+              onChange={(event) =>
+                setDraftRow((current) => ({ ...current, quantity: Number(event.target.value) }))
+              }
               step="1"
               type="number"
-              value={moogleQuantity}
+              value={draftRow.quantity}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">備註</span>
+            <input
+              className="input-text"
+              onChange={(event) => setDraftRow((current) => ({ ...current, note: event.target.value }))}
+              placeholder="可填規格、用途、HQ/NQ 等"
+              type="text"
+              value={draftRow.note}
             />
           </label>
         </div>
 
         <div className="button-row">
-          <button className="button button--primary" onClick={() => applyListingPrice('陸行鳥')} type="button">
-            套用陸行鳥價格
-          </button>
-          <button className="button button--ghost" onClick={() => applyListingPrice('莫古力')} type="button">
-            套用莫古力價格
-          </button>
-          <button className="button button--ghost" onClick={applyCheaperPrice} type="button">
-            套用較低價格
+          <button className="button button--primary" onClick={addDraftRow} type="button">
+            加入比價清單
           </button>
           <a
             className="button button--ghost"
@@ -252,68 +343,230 @@ function MarketPage() {
             rel="noreferrer"
             target="_blank"
           >
-            開啟外部查價站
+            開啟參考網站
           </a>
+        </div>
+
+        <label className="field">
+          <span className="field-label">批次貼上 (Tab 分隔：道具、陸行鳥、莫古力、數量、備註)</span>
+          <textarea
+            className="input-text"
+            onChange={(event) => setBulkInput(event.target.value)}
+            placeholder={'魔匠水藥\t1200\t1350\t3\t補師用\n魔匠料理\t880\t920\t2\t'}
+            rows={4}
+            value={bulkInput}
+          />
+        </label>
+
+        <div className="button-row">
+          <button className="button button--ghost" onClick={importBulkRows} type="button">
+            匯入多行資料
+          </button>
+          <button className="button button--ghost" onClick={clearRows} type="button">
+            清空比價清單
+          </button>
+        </div>
+
+        {message && (
+          <div className="callout callout--success">
+            <span className="callout-title">狀態</span>
+            <span className="callout-body">{message}</span>
+          </div>
+        )}
+      </section>
+
+      <section className="page-card">
+        <div className="section-heading">
+          <h2>整體購買摘要</h2>
+          <p>用同一份清單快速看出整體買在陸行鳥、莫古力，或混合購買的成本差異。</p>
         </div>
 
         <div className="stats-grid">
           <article className="stat-card">
-            <div className="stat-label">較便宜的伺服器</div>
-            <div className="stat-value">{comparison.cheaperServer ?? '尚未輸入'}</div>
+            <div className="stat-label">全部買陸行鳥</div>
+            <div className="stat-value">{formatGil(workbookSummary.chocoboTotal)}</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">較高價伺服器</div>
-            <div className="stat-value">{comparison.moreExpensiveServer ?? '尚未輸入'}</div>
+            <div className="stat-label">全部買莫古力</div>
+            <div className="stat-value">{formatGil(workbookSummary.moogleTotal)}</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">價差</div>
-            <div className="stat-value">{formatGil(comparison.priceSpread)}</div>
+            <div className="stat-label">逐項挑低價</div>
+            <div className="stat-value">{formatGil(workbookSummary.mixedCheapestTotal)}</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">平均單價</div>
-            <div className="stat-value">{formatGil(comparison.averagePrice)}</div>
+            <div className="stat-label">相較陸行鳥可省</div>
+            <div className="stat-value">{formatGil(workbookSummary.savingsVsChocobo)}</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">較低價庫存</div>
-            <div className="stat-value">{comparison.cheaperTotalStock}</div>
+            <div className="stat-label">相較莫古力可省</div>
+            <div className="stat-value">{formatGil(workbookSummary.savingsVsMoogle)}</div>
           </article>
-        </div>
-
-        <div className="source-grid">
-          <div className="list-panel">
-            <p className="callout-title">目前比價摘要</p>
-            <div className="detail-list">
-              <div>
-                <strong>道具</strong> {itemLabel.trim() || '未填寫'}
-              </div>
-              <div>
-                <strong>陸行鳥</strong> {formatGil(chocoboPrice)} / 庫存 {chocoboQuantity}
-              </div>
-              <div>
-                <strong>莫古力</strong> {formatGil(mooglePrice)} / 庫存 {moogleQuantity}
-              </div>
-              <div>
-                <strong>最後套用到試算</strong> {lastAppliedServer}
-              </div>
+          <article className="stat-card">
+            <div className="stat-label">便宜分佈</div>
+            <div className="stat-value">
+              陸 {workbookSummary.cheaperOnChocobo} / 莫 {workbookSummary.cheaperOnMoogle} / 平{' '}
+              {workbookSummary.equalPriceItems}
             </div>
-          </div>
-
-          <div className="list-panel">
-            <p className="callout-title">使用說明</p>
-            <p className="muted">
-              這一頁只整理你手動記錄的繁中服價格。若第三方查價站暫時不可用，你仍然可以直接輸入
-              價格後進行比較與試算。
-            </p>
-            <p className="muted">最後整理時間：{formatShortDateTime(new Date().toISOString())}</p>
-          </div>
+          </article>
         </div>
       </section>
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>市場板試算</h2>
-          <p>把你要上架的價格帶進來，快速估算總價、稅額、淨收入與利潤。</p>
+          <h2>比價清單</h2>
+          <p>每筆都可即時編輯，並可一鍵帶入市場板試算。</p>
         </div>
+
+        {rows.length === 0 ? (
+          <div className="empty-state">
+            <strong>目前沒有比價項目</strong>
+            <p>先新增一筆資料，或使用上方的批次貼上功能。</p>
+          </div>
+        ) : (
+          <div className="treasure-card-grid">
+            {rows.map((row) => {
+              const comparison = compareTwServerPrices([
+                {
+                  serverName: '陸行鳥',
+                  pricePerUnit: row.chocoboPrice,
+                  quantity: row.quantity,
+                },
+                {
+                  serverName: '莫古力',
+                  pricePerUnit: row.mooglePrice,
+                  quantity: row.quantity,
+                },
+              ])
+
+              return (
+                <article
+                  key={row.id}
+                  className={
+                    row.id === selectedCalculatorRow?.id ? 'treasure-card treasure-card--active' : 'treasure-card'
+                  }
+                >
+                  <div className="field-grid">
+                    <label className="field">
+                      <span className="field-label">道具名稱</span>
+                      <input
+                        className="input-text"
+                        onChange={(event) => updateRow(row.id, { itemName: event.target.value })}
+                        type="text"
+                        value={row.itemName}
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">陸行鳥</span>
+                      <input
+                        className="input-text"
+                        min="0"
+                        onChange={(event) => updateRow(row.id, { chocoboPrice: Number(event.target.value) })}
+                        step="1"
+                        type="number"
+                        value={row.chocoboPrice}
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">莫古力</span>
+                      <input
+                        className="input-text"
+                        min="0"
+                        onChange={(event) => updateRow(row.id, { mooglePrice: Number(event.target.value) })}
+                        step="1"
+                        type="number"
+                        value={row.mooglePrice}
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">數量</span>
+                      <input
+                        className="input-text"
+                        min="1"
+                        onChange={(event) => updateRow(row.id, { quantity: Number(event.target.value) })}
+                        step="1"
+                        type="number"
+                        value={row.quantity}
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">備註</span>
+                      <input
+                        className="input-text"
+                        onChange={(event) => updateRow(row.id, { note: event.target.value })}
+                        type="text"
+                        value={row.note}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="stats-grid">
+                    <article className="stat-card">
+                      <div className="stat-label">建議購買</div>
+                      <div className="stat-value">{comparison.cheaperServer ?? '待輸入'}</div>
+                    </article>
+                    <article className="stat-card">
+                      <div className="stat-label">單價價差</div>
+                      <div className="stat-value">{formatGil(comparison.priceSpread)}</div>
+                    </article>
+                    <article className="stat-card">
+                      <div className="stat-label">建議總價</div>
+                      <div className="stat-value">
+                        {formatGil(Math.min(row.chocoboPrice, row.mooglePrice) * Math.max(1, row.quantity))}
+                      </div>
+                    </article>
+                  </div>
+
+                  <div className="button-row">
+                    <button
+                      className="button button--primary"
+                      onClick={() => applyRowToCalculator(row, 'cheaper')}
+                      type="button"
+                    >
+                      套用較低價到試算
+                    </button>
+                    <button
+                      className="button button--ghost"
+                      onClick={() => applyRowToCalculator(row, 'chocobo')}
+                      type="button"
+                    >
+                      套用陸行鳥價格
+                    </button>
+                    <button
+                      className="button button--ghost"
+                      onClick={() => applyRowToCalculator(row, 'moogle')}
+                      type="button"
+                    >
+                      套用莫古力價格
+                    </button>
+                    <button className="button button--ghost" onClick={() => removeRow(row.id)} type="button">
+                      移除此項
+                    </button>
+                  </div>
+
+                  {row.note && <p className="treasure-card__meta">備註：{row.note}</p>}
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="page-card">
+        <div className="section-heading">
+          <h2>市場板試算</h2>
+          <p>從清單中帶入價格後，可再估算稅額、利潤與損平點。</p>
+        </div>
+
+        {selectedCalculatorRow && (
+          <div className="callout">
+            <span className="callout-title">目前試算來源</span>
+            <span className="callout-body">
+              {selectedCalculatorRow.itemName} | 數量 {selectedCalculatorRow.quantity} | 最後帶入時間{' '}
+              {formatShortDateTime(new Date().toISOString())}
+            </span>
+          </div>
+        )}
 
         <div className="field-grid">
           <label className="field">

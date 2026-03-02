@@ -32,11 +32,11 @@ function GoldSaucerPage() {
   return (
     <div className="page-grid">
       <section className="hero-card">
-        <p className="eyebrow">Gold Saucer</p>
-        <h2>金碟遊樂園 GATE 參考表</h2>
+        <p className="eyebrow">金碟遊樂園</p>
+        <h2>GATE 參考表與活動預測</h2>
         <p className="lead">
-          依台灣時間顯示 GATE 的固定時段與倒數，並加上本站自訂的活動預測。預測只供參考，
-          不保證與遊戲內當輪活動相同。
+          依台灣時間顯示 GATE 的固定時段與倒數，並加入站內的參考預測。活動預測只供安排時間用，
+          不保證與遊戲內實際出現的內容一致。
         </p>
         <div className="badge-row">
           <span className="badge badge--positive">固定以 Asia/Taipei 顯示</span>
@@ -64,8 +64,8 @@ function GoldSaucerPage() {
       <section className="source-grid">
         <article className="page-card">
           <div className="section-heading">
-            <h2>{snapshot.activeWindow ? '目前時段的活動預測' : '下一輪活動預測'}</h2>
-            <p>這是用固定種子與簡單權重做出的參考值，方便排程，不是實際公告。</p>
+            <h2>{snapshot.activeWindow ? '目前時段的預測' : '下一輪的預測'}</h2>
+            <p>這是站內用固定種子與簡單權重做出的參考值，不是官方公告。</p>
           </div>
           <div className="callout">
             <span className="callout-title">主要預測</span>
@@ -82,8 +82,8 @@ function GoldSaucerPage() {
 
         <article className="page-card">
           <div className="section-heading">
-            <h2>下一個時段的活動預測</h2>
-            <p>如果你正在等下一輪，這裡提供站內的預估方向與候選列表。</p>
+            <h2>下一個時段的預測</h2>
+            <p>如果你在等下一輪，可以先用這裡的候選活動做參考。</p>
           </div>
           <div className="callout">
             <span className="callout-title">主要預測</span>
@@ -102,7 +102,7 @@ function GoldSaucerPage() {
       <section className="page-card">
         <div className="section-heading">
           <h2>接下來 12 個 GATE 時段</h2>
-          <p>列表會持續更新倒數，並顯示每個時段的預測活動與其他候選。</p>
+          <p>列表會持續更新倒數，並顯示每個時段的活動預測與候選項目。</p>
         </div>
 
         <div className="schedule-list">
@@ -137,8 +137,8 @@ function GoldSaucerPage() {
         <div className="section-heading">
           <h2>使用說明</h2>
           <p>
-            本頁只做時段參考與活動預測。真正出現哪個 GATE，仍以遊戲內公告與現場活動為準。
-            如果之後要加入提醒或通知，會另外在站內標示為新功能。
+            本頁只做時段參考與活動預測。真正出現哪個 GATE，仍請以遊戲內實際活動為準。未來若加入提醒
+            功能，也會另外標示為新功能。
           </p>
         </div>
       </section>

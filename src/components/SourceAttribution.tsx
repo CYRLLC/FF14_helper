@@ -14,8 +14,8 @@ function SourceAttribution({ entries, title = '參考來源' }: SourceAttributio
       <div className="section-heading">
         <h2>{title}</h2>
         <p>
-          以下列出本頁功能參考與資料來源。本站為重新整理與重新實作，不直接複製原站的版面、
-          文案或素材。
+          以下列出本頁功能參考與資料來源。本站只參考方向與公開資料格式，實作時會使用自己的介面、
+          文案與程式碼，不直接複製原站內容。
         </p>
       </div>
 

@@ -35,28 +35,25 @@ function RestorePage() {
     <div className="page-grid">
       <section className="page-card">
         <div className="section-heading">
-          <h2>Restore Inspector</h2>
-          <p>
-            Load a backup ZIP and inspect its manifest before restoring anything. This is read-only
-            and stays inside the browser.
-          </p>
+          <h2>還原檢查</h2>
+          <p>載入備份 ZIP 後先檢查內容與 manifest。這一頁只讀不寫，所有處理都留在瀏覽器內。</p>
         </div>
 
         <label className="field">
-          <span className="field-label">Backup ZIP file</span>
+          <span className="field-label">選擇備份 ZIP</span>
           <input accept=".zip,application/zip" onChange={(event) => void handleFileChange(event)} type="file" />
         </label>
 
         {busy && (
           <div className="callout">
-            <span className="callout-title">Working</span>
-            <span className="callout-body">Inspecting the backup archive...</span>
+            <span className="callout-title">處理中</span>
+            <span className="callout-body">正在檢查備份檔內容...</span>
           </div>
         )}
 
         {errorMessage && (
           <div className="callout callout--error">
-            <span className="callout-title">Error</span>
+            <span className="callout-title">錯誤</span>
             <span className="callout-body">{errorMessage}</span>
           </div>
         )}
@@ -64,63 +61,58 @@ function RestorePage() {
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>Archive Summary</h2>
-          <p>
-            This helps confirm what was included in the backup, so users can restore with fewer
-            surprises.
-          </p>
+          <h2>封存摘要</h2>
+          <p>可先確認這份備份實際包含哪些檔案，降低還原時的意外。</p>
         </div>
 
         {!inspection ? (
           <div className="empty-state">
-            <strong>No archive loaded yet</strong>
-            <p>Select a ZIP file from this site&apos;s backup flow to inspect it.</p>
+            <strong>尚未載入備份檔</strong>
+            <p>請選擇由本站備份流程產生的 ZIP 來檢查。</p>
           </div>
         ) : (
           <div className="page-grid">
             <div className="stats-grid">
               <article className="stat-card">
-                <div className="stat-label">File</div>
+                <div className="stat-label">檔名</div>
                 <div className="stat-value">{inspection.fileName}</div>
               </article>
               <article className="stat-card">
-                <div className="stat-label">Size</div>
+                <div className="stat-label">大小</div>
                 <div className="stat-value">{formatBytes(inspection.size)}</div>
               </article>
               <article className="stat-card">
-                <div className="stat-label">Entries</div>
+                <div className="stat-label">項目數量</div>
                 <div className="stat-value">{inspection.entries.length}</div>
               </article>
               <article className="stat-card">
                 <div className="stat-label">Manifest</div>
-                <div className="stat-value">{inspection.manifest ? 'Detected' : 'Missing'}</div>
+                <div className="stat-value">{inspection.manifest ? '已偵測' : '缺少'}</div>
               </article>
             </div>
 
             {inspection.manifest ? (
               <div className="list-panel">
-                <p className="callout-title">Manifest</p>
+                <p className="callout-title">Manifest 內容</p>
                 <p className="muted">
-                  Created: {formatDateTimeLabel(inspection.manifest.createdAt)} | Source:{' '}
+                  建立時間：{formatDateTimeLabel(inspection.manifest.createdAt)} | 來源資料夾：
                   {inspection.manifest.sourceRootName}
                 </p>
                 <p className="muted">
-                  Characters: {inspection.manifest.characterCount} | Version:{' '}
-                  {inspection.manifest.version}
+                  角色資料夾：{inspection.manifest.characterCount} | 版本：{inspection.manifest.version}
                 </p>
               </div>
             ) : (
               <div className="callout callout--error">
-                <span className="callout-title">Manifest Missing</span>
+                <span className="callout-title">缺少 Manifest</span>
                 <span className="callout-body">
-                  This ZIP can still be opened, but it does not contain a valid
-                  `backup-manifest.json`.
+                  這份 ZIP 仍可打開，但沒有有效的 `backup-manifest.json`，請自行確認來源。
                 </span>
               </div>
             )}
 
             <div className="list-panel">
-              <p className="callout-title">Archive Entries</p>
+              <p className="callout-title">封存內容清單</p>
               <ul>
                 {inspection.entries.map((entry) => (
                   <li key={entry}>

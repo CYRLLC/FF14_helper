@@ -22,7 +22,7 @@ const navItems = [
   { label: '金碟', to: '/gold-saucer' },
   { label: '查價', to: '/market' },
   { label: '藏寶圖', to: '/treasure' },
-  { label: 'Lab', to: '/lab' },
+  { label: '實驗區', to: '/lab' },
   { label: '同步', to: '/sync' },
   { label: '工具', to: '/tools' },
   { label: '關於', to: '/about' },
@@ -54,24 +54,24 @@ function App() {
 
   if (loadError) {
     return (
-        <div className="app-shell">
-          <div className="status-panel status-panel--error">
-            <h1>無法載入網站設定</h1>
-            <p>{loadError}</p>
-          </div>
+      <div className="app-shell">
+        <div className="status-panel status-panel--error">
+          <h1>無法載入網站設定</h1>
+          <p>{loadError}</p>
         </div>
-      )
+      </div>
+    )
   }
 
   if (!config) {
     return (
-        <div className="app-shell">
-          <div className="status-panel">
-            <h1>FF14 Helper</h1>
-            <p>正在載入執行期設定與雲端服務資訊...</p>
-          </div>
+      <div className="app-shell">
+        <div className="status-panel">
+          <h1>FF14 Helper</h1>
+          <p>正在載入執行期設定與雲端服務資訊...</p>
         </div>
-      )
+      </div>
+    )
   }
 
   return (
@@ -80,19 +80,17 @@ function App() {
         <div className="app-shell">
           <header className="site-header">
             <div className="brand-lockup">
-              <p className="eyebrow">Browser-only FF14 Helper</p>
+              <p className="eyebrow">純前端 FF14 幫手</p>
               <h1>{config.appName}</h1>
               <p className="subtitle">
-                盡量在瀏覽器內完成備份、檢查、查詢與同步，不把資料存到本站伺服器。
+                盡量在瀏覽器內完成備份、檢查、查價、藏寶圖與同步整理，不把資料存到本站伺服器。
               </p>
             </div>
-            <nav className="site-nav" aria-label="Primary navigation">
+            <nav className="site-nav" aria-label="主要導覽">
               {navItems.map((item) => (
                 <NavLink
                   key={item.to}
-                  className={({ isActive }) =>
-                    isActive ? 'nav-link nav-link--active' : 'nav-link'
-                  }
+                  className={({ isActive }) => (isActive ? 'nav-link nav-link--active' : 'nav-link')}
                   end={item.to === '/'}
                   to={item.to}
                 >

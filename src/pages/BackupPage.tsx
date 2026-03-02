@@ -68,7 +68,7 @@ function BackupPage({ config }: BackupPageProps) {
     loader: () => Promise<{ rootName: string; entries: LocalFileEntry[] }>,
     method: 'native' | 'fallback',
   ): Promise<void> {
-    setBusyMessage('正在讀取並分析 FF14 設定資料夾...')
+    setBusyMessage('正在掃描你選擇的 FF14 設定資料夾...')
     setErrorMessage(null)
     setDownloadedAt(null)
     setUploadResult(null)
@@ -195,31 +195,31 @@ function BackupPage({ config }: BackupPageProps) {
         <div className="section-heading">
           <h2>備份助手</h2>
           <p>
-            Windows 預設路徑:
+            Windows 預設路徑：
             <code>%USERPROFILE%\Documents\My Games\FINAL FANTASY XIV - A Realm Reborn\</code>
           </p>
         </div>
 
         <div className="path-panel">
-          <p className="callout-title">同步原則</p>
+          <p className="callout-title">使用方式</p>
           <p className="callout-body">
-            備份檔在瀏覽器內產生。你可以下載到本機，或直接上傳到自己的雲端，本站不保存內容。
+            請選擇 FF14 設定資料夾。本站會只整理必要的設定檔與角色資料夾，避免把無關檔案一起打包。
           </p>
         </div>
 
         <div className="detail-list">
           <div>
-            <strong>預設同步目標:</strong> {targetLabel(syncState.preferences.preferredTarget)}
+            <strong>預設同步目標：</strong> {targetLabel(syncState.preferences.preferredTarget)}
           </div>
           <div>
-            <strong>雲端前先下載:</strong>{' '}
+            <strong>雲端前先下載：</strong>{' '}
             {syncState.preferences.downloadBeforeCloudUpload ? '是' : '否'}
           </div>
           <div>
-            <strong>瀏覽器能力:</strong>{' '}
+            <strong>目前可用方式：</strong>{' '}
             {nativePickerSupported
-              ? '可使用原生資料夾選取 API。'
-              : '目前瀏覽器不支援原生資料夾選取，請改用回退模式。'}
+              ? '可使用瀏覽器原生資料夾選取'
+              : '目前瀏覽器不支援原生資料夾選取，請改用回退方式'}
           </div>
         </div>
 
@@ -232,7 +232,7 @@ function BackupPage({ config }: BackupPageProps) {
             }}
             type="button"
           >
-            原生選取資料夾
+            使用原生資料夾選取
           </button>
           <button
             className="button button--ghost"
@@ -240,7 +240,7 @@ function BackupPage({ config }: BackupPageProps) {
             onClick={() => fallbackInputRef.current?.click()}
             type="button"
           >
-            回退模式選取
+            使用回退方式選取
           </button>
         </div>
 
@@ -302,12 +302,12 @@ function BackupPage({ config }: BackupPageProps) {
           </div>
         </article>
         <article className="stat-card">
-          <div className="stat-label">來源方式</div>
+          <div className="stat-label">資料來源</div>
           <div className="stat-value">
             {sourceMethod === 'native'
-              ? '原生資料夾'
+              ? '原生資料夾選取'
               : sourceMethod === 'fallback'
-                ? '回退模式'
+                ? '回退方式'
                 : '尚未選取'}
           </div>
         </article>
@@ -316,13 +316,13 @@ function BackupPage({ config }: BackupPageProps) {
       <section className="page-card">
         <div className="section-heading">
           <h2>備份摘要</h2>
-          <p>選取資料夾後，網站會先建立 ZIP，然後你可以下載、快速同步或手動上傳。</p>
+          <p>選好資料夾後，本站會先建立 ZIP，你可以選擇快速同步、只下載或上傳到自己的雲端。</p>
         </div>
 
         {!selection || !artifact ? (
           <div className="empty-state">
-            <strong>尚未建立備份檔</strong>
-            <p>請先選取 FF14 設定資料夾。成功後會在這裡顯示摘要與同步操作。</p>
+            <strong>尚未建立備份</strong>
+            <p>請先選擇 FF14 設定資料夾，系統就會掃描可備份內容並建立 ZIP。</p>
           </div>
         ) : (
           <div className="page-grid">
@@ -347,10 +347,10 @@ function BackupPage({ config }: BackupPageProps) {
 
             <div className="badge-row">
               <span className={selection.summary.hasMainConfig ? 'badge badge--positive' : 'badge'}>
-                FFXIV.cfg {selection.summary.hasMainConfig ? '已找到' : '未找到'}
+                FFXIV.cfg {selection.summary.hasMainConfig ? '已包含' : '未包含'}
               </span>
               <span className={selection.summary.hasBootConfig ? 'badge badge--positive' : 'badge'}>
-                FFXIV_BOOT.cfg {selection.summary.hasBootConfig ? '已找到' : '未找到'}
+                FFXIV_BOOT.cfg {selection.summary.hasBootConfig ? '已包含' : '未包含'}
               </span>
             </div>
 
@@ -396,9 +396,9 @@ function BackupPage({ config }: BackupPageProps) {
             </div>
 
             <div className="list-panel">
-              <p className="callout-title">納入備份的內容</p>
+              <p className="callout-title">將納入備份的內容</p>
               <ul>
-                {selection.summary.includedPaths.map((path: string) => (
+                {selection.summary.includedPaths.map((path) => (
                   <li key={path}>
                     <code>{path}</code>
                   </li>
@@ -407,7 +407,7 @@ function BackupPage({ config }: BackupPageProps) {
             </div>
 
             <div className="list-panel">
-              <p className="callout-title">最近同步紀錄</p>
+              <p className="callout-title">最近同步摘要</p>
               {syncState.history.length === 0 ? (
                 <p className="muted">目前還沒有同步紀錄。</p>
               ) : (

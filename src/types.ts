@@ -227,6 +227,7 @@ export interface TreasurePoint {
   x: number
   y: number
   partySize: 1 | 8
+  itemId?: number
 }
 
 export interface TreasureAetheryte {
