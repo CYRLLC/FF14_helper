@@ -1,100 +1,129 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { pageSources } from '../catalog/sources'
 import SourceAttribution from '../components/SourceAttribution'
-import {
-  buildXivapiSearchUrl,
-  searchXivapi,
-  type XivapiSearchResult,
-} from '../api/xivapi'
-import { buildUniversalisUrl, fetchUniversalisMarket } from '../api/universalis'
-import { calculateMarketboardSummary } from '../tools/market'
+import { calculateMarketboardSummary, compareTwServerPrices } from '../tools/market'
 import { formatGil, formatShortDateTime } from '../tools/marketFormat'
-import type { MarketRegion, MarketScopeMode, MarketScopeSelection } from '../types'
-import { getErrorMessage } from '../utils/errors'
 
-const MARKET_SELECTION_KEY = 'ff14-helper.market.selection'
+const MARKET_FORM_KEY = 'ff14-helper.market.tw-form'
 
-const regionDcOptions: Record<MarketRegion, string[]> = {
-  JP: ['Elemental', 'Gaia', 'Mana', 'Meteor'],
-  NA: ['Aether', 'Primal', 'Crystal', 'Dynamis'],
-  EU: ['Chaos', 'Light'],
-  OCE: ['Materia'],
+interface SavedMarketState {
+  itemLabel: string
+  chocoboPrice: number
+  chocoboQuantity: number
+  mooglePrice: number
+  moogleQuantity: number
+  listingPrice: number
+  quantity: number
+  taxRatePercent: number
+  unitCost: number
 }
 
-const regionWorldSuggestions: Record<MarketRegion, string[]> = {
-  JP: ['Tonberry', 'Kujata', 'Typhon', 'Ramuh'],
-  NA: ['Gilgamesh', 'Cactuar', 'Faerie', 'Leviathan'],
-  EU: ['Phoenix', 'Odin', 'Shiva', 'Twintania'],
-  OCE: ['Ravana', 'Sophia', 'Bismarck', 'Sephirot'],
-}
-
-function getDefaultSelection(): MarketScopeSelection {
+function getDefaultState(): SavedMarketState {
   return {
-    region: 'JP',
-    mode: 'dc',
-    scopeKey: 'Elemental',
+    itemLabel: '',
+    chocoboPrice: 1200,
+    chocoboQuantity: 10,
+    mooglePrice: 1350,
+    moogleQuantity: 12,
+    listingPrice: 1200,
+    quantity: 1,
+    taxRatePercent: 5,
+    unitCost: 700,
   }
 }
 
-function loadSavedSelection(): MarketScopeSelection {
+function loadSavedState(): SavedMarketState {
   if (typeof window === 'undefined') {
-    return getDefaultSelection()
+    return getDefaultState()
   }
 
   try {
-    const raw = window.localStorage.getItem(MARKET_SELECTION_KEY)
+    const raw = window.localStorage.getItem(MARKET_FORM_KEY)
 
     if (!raw) {
-      return getDefaultSelection()
+      return getDefaultState()
     }
 
-    const parsed = JSON.parse(raw) as Partial<MarketScopeSelection>
+    const parsed = JSON.parse(raw) as Partial<SavedMarketState>
 
-    if (
-      (parsed.region === 'JP' || parsed.region === 'NA' || parsed.region === 'EU' || parsed.region === 'OCE') &&
-      (parsed.mode === 'dc' || parsed.mode === 'world') &&
-      typeof parsed.scopeKey === 'string' &&
-      parsed.scopeKey.trim()
-    ) {
-      return {
-        region: parsed.region,
-        mode: parsed.mode,
-        scopeKey: parsed.scopeKey.trim(),
-      }
+    return {
+      itemLabel: typeof parsed.itemLabel === 'string' ? parsed.itemLabel : '',
+      chocoboPrice: Number(parsed.chocoboPrice ?? 1200),
+      chocoboQuantity: Number(parsed.chocoboQuantity ?? 10),
+      mooglePrice: Number(parsed.mooglePrice ?? 1350),
+      moogleQuantity: Number(parsed.moogleQuantity ?? 12),
+      listingPrice: Number(parsed.listingPrice ?? 1200),
+      quantity: Number(parsed.quantity ?? 1),
+      taxRatePercent: Number(parsed.taxRatePercent ?? 5),
+      unitCost: Number(parsed.unitCost ?? 700),
     }
   } catch {
-    return getDefaultSelection()
+    return getDefaultState()
   }
-
-  return getDefaultSelection()
 }
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('zh-TW', {
     maximumFractionDigits: 2,
   }).format(value)
 }
 
 function MarketPage() {
-  const [selection, setSelection] = useState<MarketScopeSelection>(() => loadSavedSelection())
-  const [sheetTerm, setSheetTerm] = useState('')
-  const [searchResults, setSearchResults] = useState<XivapiSearchResult[]>([])
-  const [searchLoading, setSearchLoading] = useState(false)
-  const [searchError, setSearchError] = useState<string | null>(null)
-  const [selectedItem, setSelectedItem] = useState<XivapiSearchResult | null>(null)
-  const [marketLoading, setMarketLoading] = useState(false)
-  const [marketError, setMarketError] = useState<string | null>(null)
-  const [marketSnapshot, setMarketSnapshot] = useState<Awaited<
-    ReturnType<typeof fetchUniversalisMarket>
-  > | null>(null)
-  const [listingPrice, setListingPrice] = useState(1200)
-  const [quantity, setQuantity] = useState(1)
-  const [taxRatePercent, setTaxRatePercent] = useState(5)
-  const [unitCost, setUnitCost] = useState(700)
+  const [savedState] = useState(() => loadSavedState())
+  const [itemLabel, setItemLabel] = useState(savedState.itemLabel)
+  const [chocoboPrice, setChocoboPrice] = useState(savedState.chocoboPrice)
+  const [chocoboQuantity, setChocoboQuantity] = useState(savedState.chocoboQuantity)
+  const [mooglePrice, setMooglePrice] = useState(savedState.mooglePrice)
+  const [moogleQuantity, setMoogleQuantity] = useState(savedState.moogleQuantity)
+  const [listingPrice, setListingPrice] = useState(savedState.listingPrice)
+  const [quantity, setQuantity] = useState(savedState.quantity)
+  const [taxRatePercent, setTaxRatePercent] = useState(savedState.taxRatePercent)
+  const [unitCost, setUnitCost] = useState(savedState.unitCost)
+  const [lastAppliedServer, setLastAppliedServer] = useState<'陸行鳥' | '莫古力'>('陸行鳥')
 
   useEffect(() => {
-    window.localStorage.setItem(MARKET_SELECTION_KEY, JSON.stringify(selection))
-  }, [selection])
+    window.localStorage.setItem(
+      MARKET_FORM_KEY,
+      JSON.stringify({
+        itemLabel,
+        chocoboPrice,
+        chocoboQuantity,
+        mooglePrice,
+        moogleQuantity,
+        listingPrice,
+        quantity,
+        taxRatePercent,
+        unitCost,
+      }),
+    )
+  }, [
+    chocoboPrice,
+    chocoboQuantity,
+    itemLabel,
+    listingPrice,
+    mooglePrice,
+    moogleQuantity,
+    quantity,
+    taxRatePercent,
+    unitCost,
+  ])
+
+  const comparison = useMemo(
+    () =>
+      compareTwServerPrices([
+        {
+          serverName: '陸行鳥',
+          pricePerUnit: chocoboPrice,
+          quantity: chocoboQuantity,
+        },
+        {
+          serverName: '莫古力',
+          pricePerUnit: mooglePrice,
+          quantity: moogleQuantity,
+        },
+      ]),
+    [chocoboPrice, chocoboQuantity, mooglePrice, moogleQuantity],
+  )
 
   const marketSummary = useMemo(
     () =>
@@ -107,340 +136,188 @@ function MarketPage() {
     [listingPrice, quantity, taxRatePercent, unitCost],
   )
 
-  async function handleSearch(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault()
-    setSearchLoading(true)
-    setSearchError(null)
-    setSelectedItem(null)
-    setMarketSnapshot(null)
-    setMarketError(null)
-
-    try {
-      const results = await searchXivapi(sheetTerm, 'Item', 8)
-      setSearchResults(results)
-    } catch (error: unknown) {
-      setSearchResults([])
-      setSearchError(getErrorMessage(error))
-    } finally {
-      setSearchLoading(false)
+  function applyListingPrice(serverName: '陸行鳥' | '莫古力'): void {
+    if (serverName === '陸行鳥') {
+      setListingPrice(chocoboPrice)
+    } else {
+      setListingPrice(mooglePrice)
     }
+
+    setLastAppliedServer(serverName)
   }
 
-  async function handleMarketLookup(result: XivapiSearchResult): Promise<void> {
-    setSelectedItem(result)
-    setMarketLoading(true)
-    setMarketError(null)
-
-    try {
-      const snapshot = await fetchUniversalisMarket(selection, result.rowId)
-      setMarketSnapshot(snapshot)
-
-      if (typeof snapshot.lowestPrice === 'number') {
-        setListingPrice(Math.max(1, Math.round(snapshot.lowestPrice)))
-      }
-    } catch (error: unknown) {
-      setMarketSnapshot(null)
-      setMarketError(getErrorMessage(error))
-    } finally {
-      setMarketLoading(false)
-    }
+  function applyCheaperPrice(): void {
+    const cheaperServer = comparison.cheaperServer === '莫古力' ? '莫古力' : '陸行鳥'
+    applyListingPrice(cheaperServer)
   }
-
-  const dcOptions = regionDcOptions[selection.region]
-  const worldSuggestions = regionWorldSuggestions[selection.region]
 
   return (
     <div className="page-grid">
       <section className="hero-card">
         <p className="eyebrow">Market</p>
-        <h2>市場查價</h2>
+        <h2>繁中服查價工作台</h2>
         <p className="lead">
-          先用 XIVAPI 搜尋道具，再用 Universalis 抓取市場資料。所有查詢都直接由你的瀏覽器送出，本站不保存查價資料。
+          這一頁只針對繁中伺服器。你可以手動整理陸行鳥與莫古力的價格與庫存，快速比較價差，
+          再把較適合的價格套進市場板試算。本站不保存你的查價內容到伺服器。
         </p>
         <div className="badge-row">
-          <span className="badge badge--positive">資料中心優先</span>
-          <span className="badge">預設 JP / Elemental</span>
-          <span className="badge badge--warning">數據會隨市場變動</span>
+          <span className="badge badge--positive">限定繁中服</span>
+          <span className="badge">陸行鳥 / 莫古力</span>
+          <span className="badge badge--warning">價格資料由你手動輸入</span>
         </div>
       </section>
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>查詢條件</h2>
-          <p>先選範圍，再搜尋道具名稱。若切到世界模式，可直接輸入世界名稱。</p>
+          <h2>手動比價</h2>
+          <p>
+            可先在外部工具確認價格，再把你要比較的資訊填進來。本站只負責整理、比較與試算，
+            不宣稱提供即時繁中服 API。
+          </p>
         </div>
 
         <div className="field-grid">
           <label className="field">
-            <span className="field-label">區域</span>
-            <select
-              className="input-select"
-              onChange={(event) =>
-                setSelection((current) => ({
-                  ...current,
-                  region: event.target.value as MarketRegion,
-                  scopeKey:
-                    current.mode === 'dc'
-                      ? regionDcOptions[event.target.value as MarketRegion][0]
-                      : regionWorldSuggestions[event.target.value as MarketRegion][0],
-                }))
-              }
-              value={selection.region}
-            >
-              <option value="JP">JP</option>
-              <option value="NA">NA</option>
-              <option value="EU">EU</option>
-              <option value="OCE">OCE</option>
-            </select>
-          </label>
-
-          <label className="field">
-            <span className="field-label">範圍模式</span>
-            <select
-              className="input-select"
-              onChange={(event) => {
-                const nextMode = event.target.value as MarketScopeMode
-                setSelection((current) => ({
-                  ...current,
-                  mode: nextMode,
-                  scopeKey:
-                    nextMode === 'dc'
-                      ? regionDcOptions[current.region][0]
-                      : regionWorldSuggestions[current.region][0],
-                }))
-              }}
-              value={selection.mode}
-            >
-              <option value="dc">資料中心</option>
-              <option value="world">單一世界</option>
-            </select>
-          </label>
-
-          {selection.mode === 'dc' ? (
-            <label className="field">
-              <span className="field-label">資料中心</span>
-              <select
-                className="input-select"
-                onChange={(event) =>
-                  setSelection((current) => ({
-                    ...current,
-                    scopeKey: event.target.value,
-                  }))
-                }
-                value={selection.scopeKey}
-              >
-                {dcOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <label className="field">
-              <span className="field-label">世界</span>
-              <input
-                className="input-text"
-                list={`world-suggestions-${selection.region}`}
-                onChange={(event) =>
-                  setSelection((current) => ({
-                    ...current,
-                    scopeKey: event.target.value,
-                  }))
-                }
-                placeholder="輸入世界名稱"
-                type="text"
-                value={selection.scopeKey}
-              />
-              <datalist id={`world-suggestions-${selection.region}`}>
-                {worldSuggestions.map((option) => (
-                  <option key={option} value={option} />
-                ))}
-              </datalist>
-            </label>
-          )}
-        </div>
-
-        <form className="page-grid" onSubmit={(event) => void handleSearch(event)}>
-          <label className="field">
-            <span className="field-label">道具名稱</span>
+            <span className="field-label">道具名稱或備註</span>
             <input
               className="input-text"
-              onChange={(event) => setSheetTerm(event.target.value)}
-              placeholder="例如 Tincture, Materia, Food"
+              onChange={(event) => setItemLabel(event.target.value)}
+              placeholder="例如：魔匠水藥、料理、素材"
               type="text"
-              value={sheetTerm}
+              value={itemLabel}
             />
           </label>
-
-          <div className="button-row">
-            <button className="button button--primary" disabled={searchLoading} type="submit">
-              {searchLoading ? '搜尋中...' : '搜尋道具'}
-            </button>
-            <a
-              className="button button--ghost"
-              href={buildXivapiSearchUrl(sheetTerm || 'Potion', 'Item', 8)}
-              rel="noreferrer"
-              target="_blank"
-            >
-              查看 XIVAPI 查詢
-            </a>
-          </div>
-        </form>
-
-        {searchError && (
-          <div className="callout callout--error">
-            <span className="callout-title">搜尋失敗</span>
-            <span className="callout-body">{searchError}</span>
-          </div>
-        )}
-
-        {searchResults.length > 0 && (
-          <div className="history-list">
-            {searchResults.map((result) => (
-              <article key={result.rowId} className="history-item">
-                <div className="history-item__top">
-                  <div>
-                    <strong>{result.name}</strong>
-                    <p className="muted">Item ID: {result.rowId}</p>
-                  </div>
-                  <button
-                    className="button button--ghost"
-                    onClick={() => void handleMarketLookup(result)}
-                    type="button"
-                  >
-                    查詢 {selection.scopeKey}
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-
-        {!searchLoading && !searchError && sheetTerm.trim().length >= 2 && searchResults.length === 0 && (
-          <div className="empty-state">
-            <strong>查無道具</strong>
-            <p>可改用更短的關鍵字，或直接開啟 XIVAPI 查詢連結確認名稱。</p>
-          </div>
-        )}
-      </section>
-
-      <section className="page-card">
-        <div className="section-heading">
-          <h2>市場資料</h2>
-          <p>若第三方 API 暫時不可用，頁面會保留查詢條件，不會整頁中斷。</p>
-        </div>
-
-        {selectedItem && (
-          <div className="callout">
-            <span className="callout-title">目前查詢</span>
-            <span className="callout-body">
-              {selectedItem.name} ({selectedItem.rowId}) | {selection.scopeKey}
-            </span>
-          </div>
-        )}
-
-        {marketLoading && (
-          <div className="callout">
-            <span className="callout-title">載入中</span>
-            <span className="callout-body">正在向 Universalis 取得最新公開資料...</span>
-          </div>
-        )}
-
-        {marketError && (
-          <div className="callout callout--error">
-            <span className="callout-title">查價失敗</span>
-            <span className="callout-body">{marketError}</span>
-          </div>
-        )}
-
-        {marketSnapshot && !marketLoading && (
-          <div className="page-grid">
-            <div className="stats-grid">
-              <article className="stat-card">
-                <div className="stat-label">最低上架</div>
-                <div className="stat-value">{formatGil(marketSnapshot.lowestPrice)}</div>
-              </article>
-              <article className="stat-card">
-                <div className="stat-label">最高上架</div>
-                <div className="stat-value">{formatGil(marketSnapshot.highestPrice)}</div>
-              </article>
-              <article className="stat-card">
-                <div className="stat-label">平均價格</div>
-                <div className="stat-value">{formatGil(marketSnapshot.averagePrice)}</div>
-              </article>
-              <article className="stat-card">
-                <div className="stat-label">近期成交數</div>
-                <div className="stat-value">{marketSnapshot.recentHistoryCount}</div>
-              </article>
-            </div>
-
-            <div className="callout">
-              <span className="callout-title">最後更新</span>
-              <span className="callout-body">{formatShortDateTime(marketSnapshot.fetchedAt)}</span>
-              <span className="muted">
-                API URL: {buildUniversalisUrl(selection, marketSnapshot.itemId)}
-              </span>
-            </div>
-
-            <div className="source-grid">
-              <div className="list-panel">
-                <p className="callout-title">前 5 筆上架</p>
-                {marketSnapshot.listings.length === 0 ? (
-                  <p className="muted">目前沒有可用的上架資料。</p>
-                ) : (
-                  <div className="source-list">
-                    {marketSnapshot.listings.slice(0, 5).map((entry, index) => (
-                      <article key={`${entry.worldName}-${index}`} className="source-item">
-                        <strong>
-                          {formatGil(entry.pricePerUnit)} x {entry.quantity}
-                        </strong>
-                        <p className="muted">
-                          {entry.worldName} | {entry.hq ? 'HQ' : 'NQ'} | 總價 {formatGil(entry.total)}
-                        </p>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="list-panel">
-                <p className="callout-title">前 5 筆成交</p>
-                {marketSnapshot.recentHistory.length === 0 ? (
-                  <p className="muted">目前沒有可用的近期成交資料。</p>
-                ) : (
-                  <div className="source-list">
-                    {marketSnapshot.recentHistory.slice(0, 5).map((entry, index) => (
-                      <article
-                        key={`${entry.worldName}-${entry.timestamp}-${index}`}
-                        className="source-item"
-                      >
-                        <strong>
-                          {formatGil(entry.pricePerUnit)} x {entry.quantity}
-                        </strong>
-                        <p className="muted">
-                          {entry.worldName} | {entry.hq ? 'HQ' : 'NQ'} |{' '}
-                          {formatShortDateTime(entry.timestamp)}
-                        </p>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      <section className="page-card">
-        <div className="section-heading">
-          <h2>上架試算</h2>
-          <p>可直接用查到的價格做試算，也能手動調整稅率、數量與成本。</p>
         </div>
 
         <div className="field-grid">
           <label className="field">
-            <span className="field-label">單價</span>
+            <span className="field-label">陸行鳥單價</span>
+            <input
+              className="input-text"
+              min="0"
+              onChange={(event) => setChocoboPrice(Number(event.target.value))}
+              step="1"
+              type="number"
+              value={chocoboPrice}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">陸行鳥庫存</span>
+            <input
+              className="input-text"
+              min="0"
+              onChange={(event) => setChocoboQuantity(Number(event.target.value))}
+              step="1"
+              type="number"
+              value={chocoboQuantity}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">莫古力單價</span>
+            <input
+              className="input-text"
+              min="0"
+              onChange={(event) => setMooglePrice(Number(event.target.value))}
+              step="1"
+              type="number"
+              value={mooglePrice}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">莫古力庫存</span>
+            <input
+              className="input-text"
+              min="0"
+              onChange={(event) => setMoogleQuantity(Number(event.target.value))}
+              step="1"
+              type="number"
+              value={moogleQuantity}
+            />
+          </label>
+        </div>
+
+        <div className="button-row">
+          <button className="button button--primary" onClick={() => applyListingPrice('陸行鳥')} type="button">
+            套用陸行鳥價格
+          </button>
+          <button className="button button--ghost" onClick={() => applyListingPrice('莫古力')} type="button">
+            套用莫古力價格
+          </button>
+          <button className="button button--ghost" onClick={applyCheaperPrice} type="button">
+            套用較低價格
+          </button>
+          <a
+            className="button button--ghost"
+            href="https://beherw.github.io/FFXIV_Market/"
+            rel="noreferrer"
+            target="_blank"
+          >
+            開啟外部查價站
+          </a>
+        </div>
+
+        <div className="stats-grid">
+          <article className="stat-card">
+            <div className="stat-label">較便宜的伺服器</div>
+            <div className="stat-value">{comparison.cheaperServer ?? '尚未輸入'}</div>
+          </article>
+          <article className="stat-card">
+            <div className="stat-label">較高價伺服器</div>
+            <div className="stat-value">{comparison.moreExpensiveServer ?? '尚未輸入'}</div>
+          </article>
+          <article className="stat-card">
+            <div className="stat-label">價差</div>
+            <div className="stat-value">{formatGil(comparison.priceSpread)}</div>
+          </article>
+          <article className="stat-card">
+            <div className="stat-label">平均單價</div>
+            <div className="stat-value">{formatGil(comparison.averagePrice)}</div>
+          </article>
+          <article className="stat-card">
+            <div className="stat-label">較低價庫存</div>
+            <div className="stat-value">{comparison.cheaperTotalStock}</div>
+          </article>
+        </div>
+
+        <div className="source-grid">
+          <div className="list-panel">
+            <p className="callout-title">目前比價摘要</p>
+            <div className="detail-list">
+              <div>
+                <strong>道具</strong> {itemLabel.trim() || '未填寫'}
+              </div>
+              <div>
+                <strong>陸行鳥</strong> {formatGil(chocoboPrice)} / 庫存 {chocoboQuantity}
+              </div>
+              <div>
+                <strong>莫古力</strong> {formatGil(mooglePrice)} / 庫存 {moogleQuantity}
+              </div>
+              <div>
+                <strong>最後套用到試算</strong> {lastAppliedServer}
+              </div>
+            </div>
+          </div>
+
+          <div className="list-panel">
+            <p className="callout-title">使用說明</p>
+            <p className="muted">
+              這一頁只整理你手動記錄的繁中服價格。若第三方查價站暫時不可用，你仍然可以直接輸入
+              價格後進行比較與試算。
+            </p>
+            <p className="muted">最後整理時間：{formatShortDateTime(new Date().toISOString())}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="page-card">
+        <div className="section-heading">
+          <h2>市場板試算</h2>
+          <p>把你要上架的價格帶進來，快速估算總價、稅額、淨收入與利潤。</p>
+        </div>
+
+        <div className="field-grid">
+          <label className="field">
+            <span className="field-label">上架單價</span>
             <input
               className="input-text"
               min="0"
@@ -487,7 +364,7 @@ function MarketPage() {
 
         <div className="stats-grid">
           <article className="stat-card">
-            <div className="stat-label">總收入</div>
+            <div className="stat-label">總售價</div>
             <div className="stat-value">{formatNumber(marketSummary.grossTotal)} gil</div>
           </article>
           <article className="stat-card">
@@ -499,8 +376,16 @@ function MarketPage() {
             <div className="stat-value">{formatNumber(marketSummary.netTotal)} gil</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">利潤</div>
+            <div className="stat-label">總成本</div>
+            <div className="stat-value">{formatNumber(marketSummary.totalCost)} gil</div>
+          </article>
+          <article className="stat-card">
+            <div className="stat-label">預估利潤</div>
             <div className="stat-value">{formatNumber(marketSummary.profit)} gil</div>
+          </article>
+          <article className="stat-card">
+            <div className="stat-label">損平單價</div>
+            <div className="stat-value">{formatNumber(marketSummary.breakEvenPerUnit)} gil</div>
           </article>
         </div>
       </section>

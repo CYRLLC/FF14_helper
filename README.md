@@ -2,14 +2,14 @@
 
 FF14 Helper is a public, browser-first toolkit for Final Fantasy XIV players.
 
-The site is built as a static app for GitHub Pages. As much as possible, user actions stay in the browser: backup ZIP generation, restore inspection, local sync preferences, Gold Saucer timing, market lookups, and treasure-map helpers all run without a custom backend owned by this project.
+The site is built as a static app for GitHub Pages. As much as possible, user actions stay in the browser: backup ZIP generation, restore inspection, local sync preferences, Gold Saucer timing, Traditional Chinese server price comparison, and treasure-map helpers all run without a custom backend owned by this project.
 
 ## Status
 
 This project is actively being developed.
 
 - Core backup and restore helper flows are usable now.
-- Gold Saucer, market lookup, and treasure helper pages are available as the first utility wave.
+- Gold Saucer, market, and treasure pages are available as the first utility wave.
 - More helper pages can still be added over time.
 
 ## Current Feature Set
@@ -20,10 +20,10 @@ This project is actively being developed.
 - Restore inspector for existing backup ZIP files
 - Local sync preferences and recent history
 - Gold Saucer GATE schedule reference in Taiwan time
-- Item search with XIVAPI
-- Market lookup with Universalis
+- Reference-only GATE activity prediction
+- Traditional Chinese server comparison workbench for `陸行鳥` and `莫古力`
 - Marketboard math helper
-- Treasure coordinate helper for Dawntrail field zones
+- Treasure finder style helper for Dawntrail treasure maps
 - External tool directory with in-site reference links
 
 ## Data Policy
@@ -32,28 +32,32 @@ This project does not operate its own backend for storing user content.
 
 - Backup ZIP contents are generated in the browser.
 - Sync preferences and some helper-page defaults may be stored in browser `localStorage`.
-- Market lookups call public third-party APIs directly from the browser.
+- Market comparison values on the Traditional Chinese server page are entered by the user and kept in the browser.
 - The site does not upload your personal configuration files, query history, or treasure selections to a server controlled by this project.
 
 Cloud upload is only used when you explicitly choose OneDrive or Google Drive, and those uploads go to your own cloud account.
 
 ## Reference Sources
 
-The project references community tools and public docs for feature direction and public data access. The site does not directly copy layouts, text, or assets from those sources.
+The project references community tools and public docs for feature direction and public data access. The site does not directly copy layouts, text, or assets from those sources. Features are reinterpreted and reimplemented with this repository's own UI, copy, and code structure.
 
 ### Feature Inspiration
 
 - [FFXIV Market (beherw)](https://beherw.github.io/FFXIV_Market/)
 - [xiv-tc-toolbox (cycleapple)](https://cycleapple.github.io/xiv-tc-toolbox/)
+- [xiv-tc-treasure-finder (cycleapple)](https://cycleapple.github.io/xiv-tc-treasure-finder/)
 - [FFXIV Teamcraft](https://ffxivteamcraft.com/)
 - [Garland Tools](https://garlandtools.org/)
 
 ### Data Sources and Docs
 
-- [Universalis](https://universalis.app/)
+- [Console Games Wiki: Gold Saucer Active Time Events](https://ffxiv.consolegameswiki.com/wiki/Gold_Saucer_Active_Time_Events)
+- [cycleapple treasure data.js](https://cycleapple.github.io/xiv-tc-treasure-finder/js/data.js)
+- [XIVAPI](https://xivapi.com/)
 - [XIVAPI Docs](https://v2.xivapi.com/docs)
 - [XIVAPI Search Guide](https://v2.xivapi.com/docs/guides/search/)
-- [Console Games Wiki: Gold Saucer Active Time Events](https://ffxiv.consolegameswiki.com/wiki/Gold_Saucer_Active_Time_Events)
+- [XIVAPI MapCoordinates.md](https://github.com/xivapi/ffxiv-datamining/blob/master/docs/MapCoordinates.md)
+- [Universalis](https://universalis.app/)
 
 ## Project Goals
 

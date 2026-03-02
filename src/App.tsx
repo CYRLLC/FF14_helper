@@ -16,16 +16,16 @@ import type { RuntimeConfig } from './types'
 import { getErrorMessage } from './utils/errors'
 
 const navItems = [
-  { label: 'Home', to: '/' },
-  { label: 'Backup', to: '/backup' },
-  { label: 'Restore', to: '/restore' },
-  { label: 'Gold Saucer', to: '/gold-saucer' },
-  { label: 'Market', to: '/market' },
-  { label: 'Treasure', to: '/treasure' },
+  { label: '首頁', to: '/' },
+  { label: '備份', to: '/backup' },
+  { label: '還原檢查', to: '/restore' },
+  { label: '金碟', to: '/gold-saucer' },
+  { label: '查價', to: '/market' },
+  { label: '藏寶圖', to: '/treasure' },
   { label: 'Lab', to: '/lab' },
-  { label: 'Sync', to: '/sync' },
-  { label: 'Tools', to: '/tools' },
-  { label: 'About', to: '/about' },
+  { label: '同步', to: '/sync' },
+  { label: '工具', to: '/tools' },
+  { label: '關於', to: '/about' },
 ]
 
 function App() {
@@ -54,24 +54,24 @@ function App() {
 
   if (loadError) {
     return (
-      <div className="app-shell">
-        <div className="status-panel status-panel--error">
-          <h1>Unable to load site configuration</h1>
-          <p>{loadError}</p>
+        <div className="app-shell">
+          <div className="status-panel status-panel--error">
+            <h1>無法載入網站設定</h1>
+            <p>{loadError}</p>
+          </div>
         </div>
-      </div>
-    )
+      )
   }
 
   if (!config) {
     return (
-      <div className="app-shell">
-        <div className="status-panel">
-          <h1>FF14 Helper</h1>
-          <p>Loading runtime settings and cloud provider configuration...</p>
+        <div className="app-shell">
+          <div className="status-panel">
+            <h1>FF14 Helper</h1>
+            <p>正在載入執行期設定與雲端服務資訊...</p>
+          </div>
         </div>
-      </div>
-    )
+      )
   }
 
   return (
@@ -83,7 +83,7 @@ function App() {
               <p className="eyebrow">Browser-only FF14 Helper</p>
               <h1>{config.appName}</h1>
               <p className="subtitle">
-                Backup, inspect, search, and sync from the browser without site-side storage.
+                盡量在瀏覽器內完成備份、檢查、查詢與同步，不把資料存到本站伺服器。
               </p>
             </div>
             <nav className="site-nav" aria-label="Primary navigation">

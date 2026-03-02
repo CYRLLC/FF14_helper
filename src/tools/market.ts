@@ -14,6 +14,20 @@ export interface MarketboardSummary {
   breakEvenPerUnit: number
 }
 
+export interface TwServerPriceInput {
+  serverName: string
+  pricePerUnit: number
+  quantity: number
+}
+
+export interface TwServerComparison {
+  cheaperServer: string | null
+  moreExpensiveServer: string | null
+  priceSpread: number
+  averagePrice: number
+  cheaperTotalStock: number
+}
+
 function clampNumber(value: number, minimum = 0): number {
   if (!Number.isFinite(value)) {
     return minimum
@@ -44,5 +58,38 @@ export function calculateMarketboardSummary(
     totalCost,
     profit,
     breakEvenPerUnit: Number.isFinite(breakEvenPerUnit) ? breakEvenPerUnit : 0,
+  }
+}
+
+export function compareTwServerPrices(inputs: TwServerPriceInput[]): TwServerComparison {
+  const safeInputs = inputs
+    .map((input) => ({
+      serverName: input.serverName,
+      pricePerUnit: clampNumber(input.pricePerUnit),
+      quantity: Math.max(0, Math.round(clampNumber(input.quantity))),
+    }))
+    .sort((left, right) => left.pricePerUnit - right.pricePerUnit)
+
+  if (safeInputs.length < 2) {
+    return {
+      cheaperServer: null,
+      moreExpensiveServer: null,
+      priceSpread: 0,
+      averagePrice: safeInputs[0]?.pricePerUnit ?? 0,
+      cheaperTotalStock: safeInputs[0]?.quantity ?? 0,
+    }
+  }
+
+  const cheaper = safeInputs[0]
+  const expensive = safeInputs[safeInputs.length - 1]
+  const averagePrice =
+    safeInputs.reduce((total, input) => total + input.pricePerUnit, 0) / safeInputs.length
+
+  return {
+    cheaperServer: cheaper.serverName,
+    moreExpensiveServer: expensive.serverName,
+    priceSpread: Math.max(0, expensive.pricePerUnit - cheaper.pricePerUnit),
+    averagePrice,
+    cheaperTotalStock: cheaper.quantity,
   }
 }

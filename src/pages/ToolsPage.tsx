@@ -7,8 +7,11 @@ function ToolsPage() {
     <div className="page-grid">
       <section className="page-card">
         <div className="section-heading">
-          <h2>外部工具與參考站</h2>
-          <p>這些是本站會參考的社群工具與資料站。本站只會重整適合純前端靜態網站的部分，不直接複製外站內容。</p>
+          <h2>外部工具導覽</h2>
+          <p>
+            這裡整理本站功能參考過的社群工具與資料站。部分能力已經在本站做成自己的版本，
+            其餘則保留作後續擴充方向。
+          </p>
         </div>
       </section>
 
@@ -22,11 +25,11 @@ function ToolsPage() {
             <p>{tool.description}</p>
             <div className="badge-row">
               <span className={tool.futureIntegration ? 'badge badge--positive' : 'badge'}>
-                {tool.futureIntegration ? '已納入或適合納入站內功能' : '較適合作外部連結'}
+                {tool.futureIntegration ? '適合後續站內化' : '目前以外部連結為主'}
               </span>
             </div>
             <a className="tool-link" href={tool.url} rel="noreferrer" target="_blank">
-              打開站點
+              前往查看
             </a>
           </article>
         ))}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildGateScheduleSnapshot, getNextGateStart } from './gate'
+import { buildGatePrediction, buildGateScheduleSnapshot, getNextGateStart } from './gate'
 
 describe('getNextGateStart', () => {
   it('returns the next :20 slot when inside the hour', () => {
@@ -23,5 +23,17 @@ describe('buildGateScheduleSnapshot', () => {
     expect(snapshot.activeWindow?.startAtIso).toBe('2026-03-02T04:20:00.000Z')
     expect(snapshot.activeWindow?.countdownMs).toBe(20 * 60 * 1000)
     expect(snapshot.windows[0].isActive).toBe(true)
+  })
+})
+
+describe('buildGatePrediction', () => {
+  it('returns deterministic candidates for the same slot', () => {
+    const first = buildGatePrediction(new Date('2026-03-02T04:20:00.000Z'))
+    const second = buildGatePrediction(new Date('2026-03-02T04:39:59.000Z'))
+
+    expect(first.slotKey).toBe(second.slotKey)
+    expect(first.predictedEvent).toBe(second.predictedEvent)
+    expect(first.candidateEvents).toEqual(second.candidateEvents)
+    expect(first.candidateEvents).toHaveLength(3)
   })
 })

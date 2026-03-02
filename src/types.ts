@@ -133,6 +133,15 @@ export interface GateScheduleSnapshot {
   windows: GateWindow[]
 }
 
+export interface GatePrediction {
+  slotKey: string
+  predictedEvent: string
+  confidenceLabel: string
+  confidenceScore: number
+  candidateEvents: string[]
+  note: string
+}
+
 export type MarketScopeMode = 'dc' | 'world'
 export type MarketRegion = 'JP' | 'NA' | 'EU' | 'OCE'
 
@@ -193,4 +202,36 @@ export interface TreasureMarker {
   percentY: number
   mapX: number
   mapY: number
+}
+
+export interface TreasureGradeInfo {
+  id: string
+  itemId: number
+  label: string
+  itemName: string
+  partySize: 1 | 8
+}
+
+export interface TreasureMapInfo {
+  id: number
+  zoneId: number
+  label: string
+  imageUrl: string
+  sizeFactor: number
+}
+
+export interface TreasurePoint {
+  id: string
+  gradeId: string
+  mapId: number
+  x: number
+  y: number
+  partySize: 1 | 8
+}
+
+export interface TreasureAetheryte {
+  zoneId: number
+  name: string
+  x: number
+  y: number
 }

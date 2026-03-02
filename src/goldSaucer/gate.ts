@@ -1,7 +1,16 @@
-import type { GateScheduleSnapshot, GateWindow } from '../types'
+import type { GatePrediction, GateScheduleSnapshot, GateWindow } from '../types'
 
 export const GATE_MINUTES = [0, 20, 40] as const
 const GATE_DURATION_MS = 20 * 60 * 1000
+
+const GATE_EVENT_POOL = [
+  'Air Force One',
+  'Any Way the Wind Blows',
+  'Cliffhanger',
+  'Leap of Faith',
+  'The Slice Is Right',
+  'The Typhon Challenge',
+] as const
 
 function formatTaipeiLabel(date: Date): string {
   return new Intl.DateTimeFormat('zh-TW', {
@@ -13,6 +22,58 @@ function formatTaipeiLabel(date: Date): string {
     minute: '2-digit',
     hour12: false,
   }).format(date)
+}
+
+function hashSlotKey(slotKey: string): number {
+  let hash = 0
+
+  for (let index = 0; index < slotKey.length; index += 1) {
+    hash = (hash * 31 + slotKey.charCodeAt(index)) % 100000
+  }
+
+  return hash
+}
+
+function getSlotKey(date: Date): string {
+  const slotStart = new Date(date)
+  slotStart.setSeconds(0, 0)
+  slotStart.setMinutes(Math.floor(slotStart.getMinutes() / 20) * 20)
+
+  return slotStart.toISOString().slice(0, 16)
+}
+
+function buildCandidateEvents(seed: number): string[] {
+  const ordered = [...GATE_EVENT_POOL]
+  const offset = seed % ordered.length
+  const rotated = ordered.slice(offset).concat(ordered.slice(0, offset))
+
+  // Bias Leap of Faith slightly because players often care about it the most.
+  if (seed % 3 === 0) {
+    const leapIndex = rotated.indexOf('Leap of Faith')
+
+    if (leapIndex > 0) {
+      const [leap] = rotated.splice(leapIndex, 1)
+      rotated.unshift(leap)
+    }
+  }
+
+  return rotated.slice(0, 3)
+}
+
+export function buildGatePrediction(date: Date): GatePrediction {
+  const slotKey = getSlotKey(date)
+  const seed = hashSlotKey(slotKey)
+  const candidateEvents = buildCandidateEvents(seed)
+  const confidenceScore = 28 + (seed % 43)
+
+  return {
+    slotKey,
+    predictedEvent: candidateEvents[0],
+    confidenceLabel: confidenceScore >= 55 ? '偏高' : '普通',
+    confidenceScore,
+    candidateEvents,
+    note: '這是站內啟發式推估，只提供參考，不代表官方或實際當輪活動。',
+  }
 }
 
 export function formatCountdown(ms: number): string {
@@ -76,17 +137,14 @@ export function buildGateScheduleSnapshot(now = new Date(), count = 12): GateSch
   for (let index = 0; index < safeCount; index += 1) {
     const gateStart = new Date(nextGateStart.getTime() + index * GATE_DURATION_MS)
     const gateEnd = new Date(gateStart.getTime() + GATE_DURATION_MS)
+    const isActive = now.getTime() >= gateStart.getTime() && now.getTime() < gateEnd.getTime()
 
     windows.push({
       startAtIso: gateStart.toISOString(),
       endAtIso: gateEnd.toISOString(),
       labelTw: formatTaipeiLabel(gateStart),
-      countdownMs: Math.max(
-        0,
-        (now.getTime() >= gateStart.getTime() && now.getTime() < gateEnd.getTime() ? gateEnd : gateStart).getTime() -
-          now.getTime(),
-      ),
-      isActive: now.getTime() >= gateStart.getTime() && now.getTime() < gateEnd.getTime(),
+      countdownMs: Math.max(0, (isActive ? gateEnd : gateStart).getTime() - now.getTime()),
+      isActive,
     })
   }
 

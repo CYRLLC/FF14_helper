@@ -476,10 +476,51 @@ button {
   color: var(--ink-muted);
 }
 
+.choice-row,
+.treasure-card-grid {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.choice-row {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.choice-button {
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  min-height: 3rem;
+  padding: 0.8rem 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  color: #ffffff;
+  text-align: left;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.choice-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.choice-button--active {
+  border-color: rgba(246, 189, 82, 0.35);
+  background: rgba(246, 189, 82, 0.12);
+}
+
 .treasure-layout {
   display: grid;
   gap: 1rem;
   grid-template-columns: minmax(280px, 1.2fr) minmax(260px, 1fr);
+  align-items: start;
+}
+
+.treasure-finder-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(260px, 1fr);
   align-items: start;
 }
 
@@ -534,6 +575,65 @@ button {
   background: var(--accent);
   box-shadow: 0 0 0 8px rgba(246, 189, 82, 0.14);
   transform: translate(-50%, -50%);
+}
+
+.map-viewer {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+  min-height: 420px;
+}
+
+.map-viewer__image {
+  display: block;
+  width: 100%;
+  min-height: 420px;
+  object-fit: cover;
+}
+
+.map-viewer__marker {
+  position: absolute;
+  z-index: 1;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  background: rgba(12, 20, 28, 0.8);
+  color: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  transform: translate(-50%, -50%);
+}
+
+.map-viewer__marker--active {
+  border-color: rgba(246, 189, 82, 0.95);
+  background: rgba(246, 189, 82, 0.28);
+  box-shadow: 0 0 0 8px rgba(246, 189, 82, 0.14);
+}
+
+.treasure-card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.treasure-card {
+  display: grid;
+  gap: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.treasure-card--active {
+  border-color: rgba(246, 189, 82, 0.35);
+  background: rgba(246, 189, 82, 0.08);
+}
+
+.treasure-card__meta {
+  margin: 0;
+  color: var(--ink-muted);
 }
 
 .sr-only {
@@ -594,7 +694,16 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .treasure-finder-layout {
+    grid-template-columns: 1fr;
+  }
+
   .treasure-board {
     min-height: 300px;
+  }
+
+  .map-viewer,
+  .map-viewer__image {
+    min-height: 320px;
   }
 }
