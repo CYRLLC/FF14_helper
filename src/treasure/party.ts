@@ -1,4 +1,4 @@
-import type { TreasurePoint, TreasureMapInfo, TreasureAetheryte } from '../types'
+import type { TreasureAetheryte, TreasureMapInfo, TreasurePoint } from '../types'
 import { findNearestAetheryte } from './coords'
 
 export interface TreasurePartyRouteItem {
@@ -77,12 +77,12 @@ export function buildPartyMessage(
   playerName: string,
 ): string {
   const nearestAetheryte = findNearestAetheryte(map.zoneId, point, aetherytes)
-  const namePrefix = playerName.trim() ? `${playerName.trim()} ` : ''
-  const base = `/p ${namePrefix}[${map.label}] (${point.x.toFixed(1)}, ${point.y.toFixed(1)})`
+  const playerPrefix = playerName.trim() ? `${playerName.trim()} ` : ''
+  const baseMessage = `/p ${playerPrefix}[${map.label}] (${point.x.toFixed(1)}, ${point.y.toFixed(1)})`
 
   if (!nearestAetheryte) {
-    return base
+    return baseMessage
   }
 
-  return `${base} | 最近傳送水晶：[${nearestAetheryte.name}]`
+  return `${baseMessage} | 最近傳送水晶：[${nearestAetheryte.name}]`
 }

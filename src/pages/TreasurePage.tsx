@@ -9,6 +9,14 @@ import {
   type TreasurePartyRouteItem,
 } from '../treasure/party'
 import {
+  buildPartyRoomInviteUrl,
+  buildPartyRoomSnapshot,
+  clearPartyRoomInviteFromLocation,
+  createPartyRoomId,
+  readPartyRoomInviteFromLocation,
+  type TreasurePartyRoomSnapshot,
+} from '../treasure/partyRoom'
+import {
   getMapsForGrade,
   getPointsForSelection,
   loadTreasureReferenceData,
@@ -17,9 +25,15 @@ import {
 import type { TreasureGradeInfo, TreasureMapInfo, TreasurePoint } from '../types'
 import { getErrorMessage } from '../utils/errors'
 
-const TREASURE_STORAGE_KEY = 'ff14-helper.treasure.finder.v2'
+const TREASURE_STORAGE_KEY = 'ff14-helper.treasure.finder.v3'
 
 type TreasureGroupMode = 'solo' | 'party'
+
+interface SavedPartyRoomState {
+  roomId: string
+  roomName: string
+  ownerName: string
+}
 
 interface SavedTreasureFinderState {
   groupMode: TreasureGroupMode
@@ -28,6 +42,28 @@ interface SavedTreasureFinderState {
   pointId: string
   partyMembers: string[]
   partyRoutes: Record<string, TreasurePartyRouteItem[]>
+  partyRoom: SavedPartyRoomState
+}
+
+function getDefaultPartyRoomState(): SavedPartyRoomState {
+  return {
+    roomId: '',
+    roomName: '',
+    ownerName: '',
+  }
+}
+
+function padPartyMembers(members: string[]): string[] {
+  const normalizedMembers = members
+    .map((entry) => entry.trim())
+    .filter((entry, index, array) => Boolean(entry) && array.indexOf(entry) === index)
+    .slice(0, 8)
+
+  while (normalizedMembers.length < 8) {
+    normalizedMembers.push('')
+  }
+
+  return normalizedMembers
 }
 
 function getDefaultState(): SavedTreasureFinderState {
@@ -38,6 +74,7 @@ function getDefaultState(): SavedTreasureFinderState {
     pointId: '',
     partyMembers: ['', '', '', '', '', '', '', ''],
     partyRoutes: {},
+    partyRoom: getDefaultPartyRoomState(),
   }
 }
 
@@ -68,6 +105,14 @@ function readSavedState(): SavedTreasureFinderState {
         parsed.partyRoutes && typeof parsed.partyRoutes === 'object'
           ? parsed.partyRoutes
           : {},
+      partyRoom:
+        parsed.partyRoom &&
+        typeof parsed.partyRoom === 'object' &&
+        typeof parsed.partyRoom.roomId === 'string' &&
+        typeof parsed.partyRoom.roomName === 'string' &&
+        typeof parsed.partyRoom.ownerName === 'string'
+          ? parsed.partyRoom
+          : getDefaultPartyRoomState(),
     }
   } catch {
     return getDefaultState()
@@ -105,6 +150,12 @@ function TreasurePage() {
   const [partyRoutes, setPartyRoutes] = useState<Record<string, TreasurePartyRouteItem[]>>(
     savedState.partyRoutes,
   )
+  const [partyRoom, setPartyRoom] = useState<SavedPartyRoomState>(savedState.partyRoom)
+  const [incomingInvite, setIncomingInvite] = useState<TreasurePartyRoomSnapshot | null>(() =>
+    readPartyRoomInviteFromLocation(),
+  )
+  const [joinName, setJoinName] = useState('')
+  const [generatedInviteUrl, setGeneratedInviteUrl] = useState('')
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null)
 
   useEffect(() => {
@@ -197,7 +248,7 @@ function TreasurePage() {
     [activeGrade, partyRoutes],
   )
 
-  const routePointById = useMemo(() => new Map(gradePoints.map((point) => [point.id, point])), [gradePoints])
+  const pointById = useMemo(() => new Map(gradePoints.map((point) => [point.id, point])), [gradePoints])
   const mapById = useMemo(
     () => new Map((referenceData?.maps ?? []).map((map) => [map.id, map])),
     [referenceData?.maps],
@@ -207,24 +258,6 @@ function TreasurePage() {
     () => partyMembers.map((name) => name.trim()).filter(Boolean),
     [partyMembers],
   )
-
-  useEffect(() => {
-    if (!activeGrade || !activeMap || !activePoint) {
-      return
-    }
-
-    window.localStorage.setItem(
-      TREASURE_STORAGE_KEY,
-      JSON.stringify({
-        groupMode,
-        gradeId: activeGrade.id,
-        mapId: activeMap.id,
-        pointId: activePoint.id,
-        partyMembers,
-        partyRoutes,
-      }),
-    )
-  }, [activeGrade, activeMap, activePoint, groupMode, partyMembers, partyRoutes])
 
   function replaceCurrentGradeRoute(nextRoute: TreasurePartyRouteItem[]): void {
     if (!activeGrade) {
@@ -245,9 +278,132 @@ function TreasurePage() {
     }
 
     setCopiedLabel(label)
+
     window.setTimeout(() => {
       setCopiedLabel((current) => (current === label ? null : current))
     }, 1600)
+  }
+
+  function resolveCurrentPartyRoom(): SavedPartyRoomState {
+    const nextRoom = {
+      roomId: partyRoom.roomId || createPartyRoomId(),
+      roomName: partyRoom.roomName.trim() || `${activeGrade?.label ?? '8 人'} 寶圖隊伍`,
+      ownerName: partyRoom.ownerName.trim() || normalizedPartyMembers[0] || '隊長',
+    }
+
+    setPartyRoom(nextRoom)
+
+    return nextRoom
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !activeGrade || !activeMap || !activePoint) {
+      return
+    }
+
+    window.localStorage.setItem(
+      TREASURE_STORAGE_KEY,
+      JSON.stringify({
+        groupMode,
+        gradeId: activeGrade.id,
+        mapId: activeMap.id,
+        pointId: activePoint.id,
+        partyMembers,
+        partyRoutes,
+        partyRoom,
+      }),
+    )
+  }, [activeGrade, activeMap, activePoint, groupMode, partyMembers, partyRoom, partyRoutes])
+
+  async function handleCopyInviteLink(): Promise<void> {
+    if (!activeGrade || activeGrade.partySize !== 8) {
+      return
+    }
+
+    const currentRoom = resolveCurrentPartyRoom()
+    const snapshot = buildPartyRoomSnapshot({
+      roomId: currentRoom.roomId,
+      roomName: currentRoom.roomName,
+      ownerName: currentRoom.ownerName,
+      gradeId: activeGrade.id,
+      members: partyMembers,
+      route: activeRoute,
+    })
+    const inviteUrl = buildPartyRoomInviteUrl(snapshot)
+
+    setGeneratedInviteUrl(inviteUrl)
+    await handleCopy('room-link', inviteUrl)
+  }
+
+  function applyIncomingInvite(includeJoinName: boolean): void {
+    if (!incomingInvite || !referenceData) {
+      return
+    }
+
+    const nextGrade =
+      referenceData.grades.find(
+        (grade) => grade.id === incomingInvite.gradeId && grade.partySize === 8,
+      ) ?? referenceData.grades.find((grade) => grade.partySize === 8)
+
+    if (!nextGrade) {
+      return
+    }
+
+    const nextMaps = getMapsForGrade(referenceData, nextGrade.id)
+
+    if (nextMaps.length === 0) {
+      return
+    }
+
+    const validPointIds = new Set(
+      referenceData.points
+        .filter((point) => point.itemId === nextGrade.itemId || point.gradeId === nextGrade.id)
+        .map((point) => point.id),
+    )
+    const importedRoute = incomingInvite.route.filter((entry) => validPointIds.has(entry.pointId))
+    const routeFirstPoint =
+      importedRoute.length > 0
+        ? referenceData.points.find((point) => point.id === importedRoute[0].pointId) ?? null
+        : null
+    const nextMap =
+      (routeFirstPoint ? nextMaps.find((map) => map.id === routeFirstPoint.mapId) : null) ?? nextMaps[0]
+    const nextPoints = getPointsForSelection(referenceData, nextGrade.id, nextMap.id)
+    const nextPoint =
+      (routeFirstPoint ? nextPoints.find((point) => point.id === routeFirstPoint.id) : null) ?? nextPoints[0]
+
+    if (!nextPoint) {
+      return
+    }
+
+    const mergedMembers = [...incomingInvite.members]
+    const requestedJoinName = joinName.trim()
+
+    if (
+      includeJoinName &&
+      requestedJoinName &&
+      !mergedMembers.includes(requestedJoinName) &&
+      mergedMembers.length < 8
+    ) {
+      mergedMembers.push(requestedJoinName)
+    }
+
+    setGroupMode('party')
+    setGradeId(nextGrade.id)
+    setMapId(nextMap.id)
+    setPointId(nextPoint.id)
+    setPartyMembers(padPartyMembers(mergedMembers))
+    setPartyRoutes((current) => ({
+      ...current,
+      [nextGrade.id]: importedRoute,
+    }))
+    setPartyRoom({
+      roomId: incomingInvite.roomId,
+      roomName: incomingInvite.roomName,
+      ownerName: incomingInvite.ownerName,
+    })
+    setGeneratedInviteUrl('')
+    setIncomingInvite(null)
+    clearPartyRoomInviteFromLocation()
   }
 
   if (loading) {
@@ -256,7 +412,7 @@ function TreasurePage() {
         <section className="page-card">
           <div className="section-heading">
             <h2>藏寶圖資料載入中</h2>
-            <p>正在整理參考站的藏寶圖資料與地圖資訊...</p>
+            <p>正在整理地圖、點位與可用的組隊規劃資料。</p>
           </div>
         </section>
       </div>
@@ -268,8 +424,8 @@ function TreasurePage() {
       <div className="page-grid">
         <section className="page-card">
           <div className="section-heading">
-            <h2>無法載入藏寶圖資料</h2>
-            <p>{errorMessage ?? '目前沒有可用的藏寶圖資料。'}</p>
+            <h2>藏寶圖資料暫時無法使用</h2>
+            <p>{errorMessage ?? '目前沒有可用的藏寶圖資料，請稍後再試。'}</p>
           </div>
         </section>
       </div>
@@ -280,28 +436,96 @@ function TreasurePage() {
     <div className="page-grid">
       <section className="hero-card">
         <p className="eyebrow">藏寶圖</p>
-        <h2>完整藏寶圖定位助手</h2>
+        <h2>藏寶圖座標與組隊輔助</h2>
         <p className="lead">
-          這一頁參考 `xiv-tc-treasure-finder` 的操作方式，納入它目前公開的全數寶圖資料，並在站內
-          重新實作成自己的地圖查看、座標整理與 8 人組隊規劃工具。
+          本頁參考 <code>xiv-tc-treasure-finder</code> 的操作方向，整理公開可用的寶圖點位、
+          地圖切換與隊伍規劃。本站改用前端分享連結同步，不把隊伍資料存到本站伺服器。
         </p>
         <div className="badge-row">
           <span className="badge badge--positive">
             {referenceData.loadedFrom === 'remote'
-              ? '已載入參考站最新資料'
+              ? '已載入最新公開資料'
               : referenceData.loadedFrom === 'cache'
                 ? '使用本機快取資料'
-                : '使用站內備援資料'}
+                : '使用內建備援資料'}
           </span>
-          <span className="badge">單人與 8 人分開顯示</span>
-          <span className="badge badge--warning">8 人寶圖才顯示組隊規劃</span>
+          <span className="badge">單人與 8 人分流</span>
+          <span className="badge badge--warning">隊伍分享為連結快照，非即時同步</span>
         </div>
       </section>
 
+      {incomingInvite ? (
+        <section className="page-card">
+          <div className="section-heading">
+            <h2>收到隊伍邀請</h2>
+            <p>你開啟了一個寶圖隊伍邀請連結，可以先檢查內容，再決定是否載入並加入。</p>
+          </div>
+
+          <div className="stats-grid">
+            <article className="stat-card">
+              <div className="stat-label">房號</div>
+              <div className="stat-value">{incomingInvite.roomId}</div>
+            </article>
+            <article className="stat-card">
+              <div className="stat-label">隊伍名稱</div>
+              <div className="stat-value">{incomingInvite.roomName}</div>
+            </article>
+            <article className="stat-card">
+              <div className="stat-label">建立者</div>
+              <div className="stat-value">{incomingInvite.ownerName}</div>
+            </article>
+            <article className="stat-card">
+              <div className="stat-label">已登記成員</div>
+              <div className="stat-value">{incomingInvite.members.length} / 8</div>
+            </article>
+          </div>
+
+          <div className="field-grid">
+            <label className="field">
+              <span className="field-label">加入時顯示名稱</span>
+              <input
+                className="input-text"
+                onChange={(event) => setJoinName(event.target.value)}
+                placeholder="例如：角色名或常用暱稱"
+                type="text"
+                value={joinName}
+              />
+            </label>
+          </div>
+
+          <div className="button-row">
+            <button
+              className="button button--primary"
+              onClick={() => applyIncomingInvite(true)}
+              type="button"
+            >
+              載入並加入這個隊伍
+            </button>
+            <button
+              className="button button--ghost"
+              onClick={() => applyIncomingInvite(false)}
+              type="button"
+            >
+              只載入隊伍資料
+            </button>
+            <button
+              className="button button--ghost"
+              onClick={() => {
+                setIncomingInvite(null)
+                clearPartyRoomInviteFromLocation()
+              }}
+              type="button"
+            >
+              忽略這次邀請
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       <section className="page-card">
         <div className="section-heading">
-          <h2>先選寶圖類型</h2>
-          <p>單人與 8 人寶圖分開整理，避免切換時混在一起。</p>
+          <h2>模式與寶圖等級</h2>
+          <p>8 人寶圖才會顯示建房與入隊功能。單人寶圖只保留點位查找與座標複製。</p>
         </div>
 
         <div className="choice-row">
@@ -375,7 +599,7 @@ function TreasurePage() {
       <section className="page-card">
         <div className="section-heading">
           <h2>地圖與目前點位</h2>
-          <p>地圖圖片來自 XIVAPI，點位資料參考 cycleapple 的 treasure finder。</p>
+          <p>地圖影像來自公開資料來源，點位資料參考 cycleapple 的 treasure finder 並由本站重新整理。</p>
         </div>
 
         <div className="treasure-finder-layout">
@@ -409,11 +633,11 @@ function TreasurePage() {
           <div className="page-grid">
             <div className="stats-grid">
               <article className="stat-card">
-                <div className="stat-label">目前寶圖</div>
+                <div className="stat-label">寶圖等級</div>
                 <div className="stat-value">{activeGrade.label}</div>
               </article>
               <article className="stat-card">
-                <div className="stat-label">地圖名稱</div>
+                <div className="stat-label">地圖區域</div>
                 <div className="stat-value">{activeMap.label}</div>
               </article>
               <article className="stat-card">
@@ -432,16 +656,18 @@ function TreasurePage() {
               <span className="callout-title">最近傳送水晶</span>
               <span className="callout-body">
                 {(() => {
-                  const nearest = findNearestAetheryte(referenceData.maps.find((map) => map.id === activeMap.id)?.zoneId ?? activeMap.zoneId, activePoint, referenceData.aetherytes)
+                  const nearest = findNearestAetheryte(activeMap.zoneId, activePoint, referenceData.aetherytes)
 
                   if (!nearest) {
-                    return '這張地圖目前沒有內建傳送水晶資料。'
+                    return '目前沒有對應的傳送水晶資料'
                   }
 
                   return `${nearest.name} (${nearest.x.toFixed(1)}, ${nearest.y.toFixed(1)})`
                 })()}
               </span>
-              <span className="muted">複製功能會複製純文字座標，不再使用會被遊戲當成目前位置的 &lt;pos&gt;。</span>
+              <span className="muted">
+                座標複製使用純文字，不使用 <code>&lt;pos&gt;</code>，避免貼出你角色當前位置。
+              </span>
             </div>
           </div>
         </div>
@@ -449,8 +675,8 @@ function TreasurePage() {
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>目前地圖的藏寶點</h2>
-          <p>可直接點選查看，也可複製純文字座標。8 人寶圖額外提供加入組隊清單。</p>
+          <h2>目前地圖的所有點位</h2>
+          <p>可直接切換高亮、複製座標，或在 8 人寶圖模式下加入組隊路線。</p>
         </div>
 
         <div className="treasure-card-grid">
@@ -470,10 +696,12 @@ function TreasurePage() {
                 <p className="treasure-card__meta">
                   座標：X {point.x.toFixed(1)} / Y {point.y.toFixed(1)}
                 </p>
-                <p className="treasure-card__meta">最近傳送水晶：{nearest ? nearest.name : '未提供'}</p>
+                <p className="treasure-card__meta">
+                  最近傳送：{nearest ? nearest.name : '沒有資料'}
+                </p>
                 <div className="button-row">
                   <button className="button button--ghost" onClick={() => setPointId(point.id)} type="button">
-                    定位此點
+                    切到這個點
                   </button>
                   <button
                     className="button button--ghost"
@@ -487,15 +715,15 @@ function TreasurePage() {
                   >
                     {copiedLabel === `coord-${point.id}` ? '已複製' : '複製純座標'}
                   </button>
-                  {activeGrade.partySize === 8 && (
+                  {activeGrade.partySize === 8 ? (
                     <button
                       className="button button--primary"
                       onClick={() => replaceCurrentGradeRoute(addPointToRoute(activeRoute, point.id))}
                       type="button"
                     >
-                      加入組隊清單
+                      加入組隊路線
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </article>
             )
@@ -507,10 +735,101 @@ function TreasurePage() {
         <>
           <section className="page-card">
             <div className="section-heading">
-              <h2>8 人組隊規劃</h2>
+              <h2>隊伍房與邀請連結</h2>
               <p>
-                這個區塊參考 `xiv-tc-treasure-finder` 的隊伍工具概念，但改成純前端、本機儲存的組隊清單。
+                參考 <code>xiv-tc-treasure-finder</code> 的組隊方向。原站使用外部即時同步服務，
+                本站改成不經本站伺服器的分享連結模式。
               </p>
+            </div>
+
+            <div className="field-grid">
+              <label className="field">
+                <span className="field-label">隊伍名稱</span>
+                <input
+                  className="input-text"
+                  onChange={(event) =>
+                    setPartyRoom((current) => ({
+                      ...current,
+                      roomName: event.target.value,
+                    }))
+                  }
+                  placeholder={`${activeGrade.label} 寶圖隊伍`}
+                  type="text"
+                  value={partyRoom.roomName}
+                />
+              </label>
+              <label className="field">
+                <span className="field-label">建立者名稱</span>
+                <input
+                  className="input-text"
+                  onChange={(event) =>
+                    setPartyRoom((current) => ({
+                      ...current,
+                      ownerName: event.target.value,
+                    }))
+                  }
+                  placeholder="例如：團長名稱"
+                  type="text"
+                  value={partyRoom.ownerName}
+                />
+              </label>
+            </div>
+
+            <div className="stats-grid">
+              <article className="stat-card">
+                <div className="stat-label">目前房號</div>
+                <div className="stat-value">{partyRoom.roomId || '尚未建立'}</div>
+              </article>
+              <article className="stat-card">
+                <div className="stat-label">目前成員</div>
+                <div className="stat-value">{normalizedPartyMembers.length} / 8</div>
+              </article>
+              <article className="stat-card">
+                <div className="stat-label">規劃點位</div>
+                <div className="stat-value">{activeRoute.length}</div>
+              </article>
+              <article className="stat-card">
+                <div className="stat-label">模式說明</div>
+                <div className="stat-value">分享連結快照</div>
+              </article>
+            </div>
+
+            <div className="button-row">
+              <button className="button button--primary" onClick={() => void handleCopyInviteLink()} type="button">
+                {partyRoom.roomId ? '更新並複製邀請連結' : '建立隊伍並複製邀請連結'}
+              </button>
+              <button
+                className="button button--ghost"
+                onClick={() => {
+                  setPartyRoom(getDefaultPartyRoomState())
+                  setGeneratedInviteUrl('')
+                }}
+                type="button"
+              >
+                重新建立新房間
+              </button>
+            </div>
+
+            {generatedInviteUrl ? (
+              <label className="field">
+                <span className="field-label">最近產生的邀請連結</span>
+                <textarea className="input-text" readOnly rows={3} value={generatedInviteUrl} />
+              </label>
+            ) : null}
+
+            <div className="callout">
+              <span className="callout-title">使用方式</span>
+              <span className="callout-body">
+                建立者先複製邀請連結給隊友。隊友開啟後可帶名字加入，再把更新後的連結傳回來。
+                整個流程不走本站後端，因此不會有即時雙向同步。
+              </span>
+            </div>
+          </section>
+
+          <section className="page-card">
+            <div className="section-heading">
+              <h2>8 人隊伍名單</h2>
+              <p>可手動填寫 8 位成員，也可由邀請連結匯入。隊伍名單會保存在你自己的瀏覽器。</p>
             </div>
 
             <div className="party-member-grid">
@@ -540,53 +859,36 @@ function TreasurePage() {
                 onClick={() => replaceCurrentGradeRoute(optimizePartyRoute(activeRoute, gradePoints, referenceData.maps))}
                 type="button"
               >
-                自動整理路線
+                自動整理路線順序
               </button>
               <button
                 className="button button--ghost"
-                onClick={() =>
-                  replaceCurrentGradeRoute(activeRoute.filter((entry) => !entry.completed))
-                }
+                onClick={() => replaceCurrentGradeRoute(activeRoute.filter((entry) => !entry.completed))}
                 type="button"
               >
-                清除已完成
+                移除已完成項目
               </button>
               <button className="button button--ghost" onClick={() => replaceCurrentGradeRoute([])} type="button">
-                清空整份路線
+                清空目前路線
               </button>
-            </div>
-
-            <div className="stats-grid">
-              <article className="stat-card">
-                <div className="stat-label">路線總數</div>
-                <div className="stat-value">{activeRoute.length}</div>
-              </article>
-              <article className="stat-card">
-                <div className="stat-label">已完成</div>
-                <div className="stat-value">{activeRoute.filter((entry) => entry.completed).length}</div>
-              </article>
-              <article className="stat-card">
-                <div className="stat-label">待處理</div>
-                <div className="stat-value">{activeRoute.filter((entry) => !entry.completed).length}</div>
-              </article>
             </div>
           </section>
 
           <section className="page-card">
             <div className="section-heading">
-              <h2>目前組隊路線</h2>
-              <p>這份路線只存在你的瀏覽器。每個點位都可指定隊員、加註備註與複製隊頻文字。</p>
+              <h2>組隊路線清單</h2>
+              <p>這裡可以分配隊員、加註備註、調整順序，並複製可貼進隊頻的座標文字。</p>
             </div>
 
             {activeRoute.length === 0 ? (
               <div className="empty-state">
-                <strong>目前還沒有加入任何 8 人寶圖點位</strong>
-                <p>先從上面的卡片把目標點位加入組隊清單。</p>
+                <strong>目前還沒有加入任何點位</strong>
+                <p>先從上方點位卡片把要跑的寶圖加入組隊路線，這裡才會出現清單。</p>
               </div>
             ) : (
               <div className="route-list">
                 {activeRoute.map((routeEntry, index) => {
-                  const point = routePointById.get(routeEntry.pointId)
+                  const point = pointById.get(routeEntry.pointId)
 
                   if (!point) {
                     return null
@@ -613,7 +915,9 @@ function TreasurePage() {
                       <p className="treasure-card__meta">
                         座標：X {point.x.toFixed(1)} / Y {point.y.toFixed(1)}
                       </p>
-                      <p className="treasure-card__meta">最近傳送水晶：{nearest ? nearest.name : '未提供'}</p>
+                      <p className="treasure-card__meta">
+                        最近傳送：{nearest ? nearest.name : '沒有資料'}
+                      </p>
 
                       <div className="field-grid">
                         <label className="field">
@@ -653,7 +957,7 @@ function TreasurePage() {
                                 ),
                               )
                             }
-                            placeholder="例如：先飛這張、這張離水晶近"
+                            placeholder="例如：先飛主城、集合後再進圖"
                             type="text"
                             value={routeEntry.note}
                           />
@@ -669,7 +973,7 @@ function TreasurePage() {
                           }}
                           type="button"
                         >
-                          跳到此點
+                          切到這個點
                         </button>
                         <button
                           className="button button--ghost"
@@ -712,7 +1016,7 @@ function TreasurePage() {
                           }
                           type="button"
                         >
-                          {routeEntry.completed ? '標記未完成' : '標記完成'}
+                          {routeEntry.completed ? '標記為未完成' : '標記完成'}
                         </button>
                         <button
                           className="button button--ghost"
@@ -739,7 +1043,7 @@ function TreasurePage() {
                         </button>
                       </div>
 
-                      {routeEntry.note && <p className="treasure-card__meta">備註：{routeEntry.note}</p>}
+                      {routeEntry.note ? <p className="treasure-card__meta">備註：{routeEntry.note}</p> : null}
                     </article>
                   )
                 })}
@@ -750,9 +1054,9 @@ function TreasurePage() {
       ) : (
         <section className="page-card">
           <div className="section-heading">
-            <h2>單人寶圖說明</h2>
+            <h2>單人寶圖模式</h2>
             <p>
-              單人寶圖不顯示組隊規劃，避免操作過重。你仍然可以查看所有地圖、切換點位並複製純文字座標。
+              單人寶圖不會顯示建房與組隊功能。你仍然可以切換點位、查看最近傳送點，並複製寶圖座標。
             </p>
           </div>
         </section>

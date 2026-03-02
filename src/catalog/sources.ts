@@ -98,7 +98,7 @@ export const pageSources: Record<string, PageSourceBundle> = {
         name: 'xiv-tc-treasure-finder (cycleapple)',
         url: 'https://cycleapple.github.io/xiv-tc-treasure-finder/',
         category: 'inspiration',
-        note: '本站藏寶圖頁參考其等級切換、地圖切換與組隊規劃方向，但改成本站自己的前端介面與本機儲存方式。',
+        note: '本站藏寶圖頁參考其等級切換、地圖切換與組隊規劃方向；原站有即時隊伍功能，本站則改成不經本站伺服器的分享連結入隊流程。',
       },
       {
         id: 'treasure-data-cycleapple',
