@@ -3,11 +3,14 @@ import { HashRouter, NavLink, Route, Routes } from 'react-router-dom'
 import { loadRuntimeConfig } from './config/runtime'
 import AboutPage from './pages/AboutPage'
 import BackupPage from './pages/BackupPage'
+import GoldSaucerPage from './pages/GoldSaucerPage'
 import HomePage from './pages/HomePage'
 import LabPage from './pages/LabPage'
+import MarketPage from './pages/MarketPage'
 import RestorePage from './pages/RestorePage'
 import SyncPage from './pages/SyncPage'
 import ToolsPage from './pages/ToolsPage'
+import TreasurePage from './pages/TreasurePage'
 import { SyncProvider } from './sync/SyncContext'
 import type { RuntimeConfig } from './types'
 import { getErrorMessage } from './utils/errors'
@@ -16,6 +19,9 @@ const navItems = [
   { label: 'Home', to: '/' },
   { label: 'Backup', to: '/backup' },
   { label: 'Restore', to: '/restore' },
+  { label: 'Gold Saucer', to: '/gold-saucer' },
+  { label: 'Market', to: '/market' },
+  { label: 'Treasure', to: '/treasure' },
   { label: 'Lab', to: '/lab' },
   { label: 'Sync', to: '/sync' },
   { label: 'Tools', to: '/tools' },
@@ -101,6 +107,9 @@ function App() {
               <Route path="/" element={<HomePage appName={config.appName} />} />
               <Route path="/backup" element={<BackupPage config={config} />} />
               <Route path="/restore" element={<RestorePage />} />
+              <Route path="/gold-saucer" element={<GoldSaucerPage />} />
+              <Route path="/market" element={<MarketPage />} />
+              <Route path="/treasure" element={<TreasurePage />} />
               <Route path="/lab" element={<LabPage />} />
               <Route path="/sync" element={<SyncPage />} />
               <Route path="/tools" element={<ToolsPage />} />

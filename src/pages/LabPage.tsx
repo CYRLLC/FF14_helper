@@ -1,21 +1,14 @@
 import { useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import {
   buildXivapiSearchUrl,
   searchXivapi,
   type XivapiSearchResult,
   type XivapiSheet,
 } from '../api/xivapi'
-import { calculateMarketboardSummary } from '../tools/market'
 import { getErrorMessage } from '../utils/errors'
-import { formatBytes } from '../utils/format'
 
 const searchableSheets: XivapiSheet[] = ['Item', 'Recipe', 'Quest', 'Action']
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat('en-US', {
-    maximumFractionDigits: 2,
-  }).format(value)
-}
 
 function LabPage() {
   const [sheet, setSheet] = useState<XivapiSheet>('Item')
@@ -23,17 +16,6 @@ function LabPage() {
   const [results, setResults] = useState<XivapiSearchResult[]>([])
   const [loading, setLoading] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
-  const [listingPrice, setListingPrice] = useState(1200)
-  const [quantity, setQuantity] = useState(3)
-  const [taxRatePercent, setTaxRatePercent] = useState(5)
-  const [unitCost, setUnitCost] = useState(700)
-
-  const marketSummary = calculateMarketboardSummary({
-    listingPrice,
-    quantity,
-    taxRatePercent,
-    unitCost,
-  })
 
   async function handleSearch(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
@@ -56,10 +38,7 @@ function LabPage() {
       <section className="page-card">
         <div className="section-heading">
           <h2>Data Explorer</h2>
-          <p>
-            Inspired by database tools like XIVAPI and Garland Tools: search common sheets directly
-            from this site without leaving the page.
-          </p>
+          <p>這裡保留原型性質的資料搜尋區。正式查價、金碟與藏寶圖功能已移到各自的正式頁面。</p>
         </div>
 
         <form className="page-grid" onSubmit={(event) => void handleSearch(event)}>
@@ -147,99 +126,19 @@ function LabPage() {
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>Marketboard Quick Math</h2>
-          <p>
-            Inspired by market tools like Universalis: compare listing price, tax, and your own
-            cost before posting items.
-          </p>
+          <h2>正式工具入口</h2>
+          <p>這裡保留給之後測試中的小功能；常用功能請直接使用正式頁面。</p>
         </div>
-
-        <div className="field-grid">
-          <label className="field">
-            <span className="field-label">Listing price (per item)</span>
-            <input
-              className="input-text"
-              min="0"
-              onChange={(event) => setListingPrice(Number(event.target.value))}
-              step="1"
-              type="number"
-              value={listingPrice}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">Quantity</span>
-            <input
-              className="input-text"
-              min="1"
-              onChange={(event) => setQuantity(Number(event.target.value))}
-              step="1"
-              type="number"
-              value={quantity}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">Tax rate (%)</span>
-            <input
-              className="input-text"
-              min="0"
-              onChange={(event) => setTaxRatePercent(Number(event.target.value))}
-              step="0.1"
-              type="number"
-              value={taxRatePercent}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">Your unit cost</span>
-            <input
-              className="input-text"
-              min="0"
-              onChange={(event) => setUnitCost(Number(event.target.value))}
-              step="1"
-              type="number"
-              value={unitCost}
-            />
-          </label>
-        </div>
-
-        <div className="stats-grid">
-          <article className="stat-card">
-            <div className="stat-label">Gross Total</div>
-            <div className="stat-value">{formatNumber(marketSummary.grossTotal)} gil</div>
-          </article>
-          <article className="stat-card">
-            <div className="stat-label">Tax</div>
-            <div className="stat-value">{formatNumber(marketSummary.taxAmount)} gil</div>
-          </article>
-          <article className="stat-card">
-            <div className="stat-label">Net Total</div>
-            <div className="stat-value">{formatNumber(marketSummary.netTotal)} gil</div>
-          </article>
-          <article className="stat-card">
-            <div className="stat-label">Profit</div>
-            <div className="stat-value">{formatNumber(marketSummary.profit)} gil</div>
-          </article>
-        </div>
-
-        <div className="list-panel">
-          <p className="callout-title">Break-even guide</p>
-          <p className="muted">
-            You need about {formatNumber(marketSummary.breakEvenPerUnit)} gil per item to break
-            even after tax.
-          </p>
-          <p className="muted">
-            If you were exporting this as raw bytes, the current form state is roughly{' '}
-            {formatBytes(
-              new Blob([
-                JSON.stringify({
-                  listingPrice,
-                  quantity,
-                  taxRatePercent,
-                  unitCost,
-                }),
-              ]).size,
-            )}
-            .
-          </p>
+        <div className="button-row">
+          <Link className="button button--primary" to="/market">
+            打開市場查價
+          </Link>
+          <Link className="button button--ghost" to="/gold-saucer">
+            打開金碟頁
+          </Link>
+          <Link className="button button--ghost" to="/treasure">
+            打開藏寶圖頁
+          </Link>
         </div>
       </section>
     </div>

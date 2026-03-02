@@ -174,7 +174,8 @@ button {
 .feature-grid,
 .tool-grid,
 .config-grid,
-.field-grid {
+.field-grid,
+.source-grid {
   display: grid;
   gap: 0.9rem;
 }
@@ -182,7 +183,8 @@ button {
 .feature-grid,
 .stats-grid,
 .config-grid,
-.field-grid {
+.field-grid,
+.source-grid {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
@@ -420,6 +422,39 @@ button {
   gap: 0.8rem;
 }
 
+.source-list,
+.schedule-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.source-item,
+.schedule-item {
+  display: grid;
+  gap: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 0.9rem 1rem;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.schedule-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+}
+
+.schedule-item--active {
+  border-color: rgba(99, 211, 177, 0.25);
+  background: rgba(99, 211, 177, 0.08);
+}
+
+.schedule-item__meta {
+  display: grid;
+  gap: 0.45rem;
+  justify-items: end;
+}
+
 .history-item {
   border: 1px solid var(--border);
   border-radius: 1rem;
@@ -439,6 +474,66 @@ button {
 .muted {
   margin: 0;
   color: var(--ink-muted);
+}
+
+.treasure-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(280px, 1.2fr) minmax(260px, 1fr);
+  align-items: start;
+}
+
+.treasure-board {
+  position: relative;
+  width: 100%;
+  min-height: 360px;
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
+    radial-gradient(circle at center, rgba(246, 189, 82, 0.08), transparent 48%);
+  overflow: hidden;
+  touch-action: none;
+}
+
+.treasure-board__grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 10% 10%;
+}
+
+.treasure-board__crosshair {
+  position: absolute;
+  background: rgba(246, 189, 82, 0.2);
+}
+
+.treasure-board__crosshair--vertical {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+}
+
+.treasure-board__crosshair--horizontal {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+}
+
+.treasure-marker {
+  position: absolute;
+  z-index: 1;
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 8px rgba(246, 189, 82, 0.14);
+  transform: translate(-50%, -50%);
 }
 
 .sr-only {
@@ -485,5 +580,21 @@ button {
 
   .nav-link {
     padding-inline: 0.85rem;
+  }
+
+  .schedule-item {
+    grid-template-columns: 1fr;
+  }
+
+  .schedule-item__meta {
+    justify-items: start;
+  }
+
+  .treasure-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .treasure-board {
+    min-height: 300px;
   }
 }

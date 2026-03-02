@@ -101,3 +101,96 @@ export interface RestoreInspection {
   entries: string[]
   manifest: BackupManifest | null
 }
+
+export interface SourceLink {
+  id: string
+  name: string
+  url: string
+  category: 'inspiration' | 'data'
+  note: string
+}
+
+export interface PageSourceBundle {
+  pageId: string
+  title: string
+  entries: SourceLink[]
+}
+
+export interface GateWindow {
+  startAtIso: string
+  endAtIso: string
+  labelTw: string
+  countdownMs: number
+  isActive: boolean
+}
+
+export interface GateScheduleSnapshot {
+  nowIso: string
+  nowTaipeiLabel: string
+  nextGateLabel: string
+  nextGateCountdownMs: number
+  activeWindow: GateWindow | null
+  windows: GateWindow[]
+}
+
+export type MarketScopeMode = 'dc' | 'world'
+export type MarketRegion = 'JP' | 'NA' | 'EU' | 'OCE'
+
+export interface MarketScopeSelection {
+  region: MarketRegion
+  mode: MarketScopeMode
+  scopeKey: string
+}
+
+export interface UniversalisListing {
+  pricePerUnit: number
+  quantity: number
+  worldName: string
+  hq: boolean
+  total: number
+  lastReviewTime?: number
+}
+
+export interface UniversalisSaleEntry {
+  pricePerUnit: number
+  quantity: number
+  worldName: string
+  hq: boolean
+  timestamp: number
+}
+
+export interface UniversalisMarketSnapshot {
+  itemId: number
+  scopeLabel: string
+  lowestPrice?: number
+  highestPrice?: number
+  averagePrice?: number
+  averagePriceNq?: number
+  averagePriceHq?: number
+  regularSaleVelocity?: number
+  recentHistoryCount: number
+  listings: UniversalisListing[]
+  recentHistory: UniversalisSaleEntry[]
+  fetchedAt: string
+}
+
+export interface TreasureZoneConfig {
+  id: string
+  label: string
+  expansion: 'dawntrail'
+  defaultMarker: { x: number; y: number }
+  calibration: {
+    scaleX: number
+    scaleY: number
+    offsetX: number
+    offsetY: number
+  }
+}
+
+export interface TreasureMarker {
+  zoneId: string
+  percentX: number
+  percentY: number
+  mapX: number
+  mapY: number
+}

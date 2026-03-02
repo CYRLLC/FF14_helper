@@ -1,35 +1,66 @@
 # FF14 Helper
 
-FF14 Helper is a public browser-first toolkit for Final Fantasy XIV players.
+FF14 Helper is a public, browser-first toolkit for Final Fantasy XIV players.
 
-The project is designed to run as a static site on GitHub Pages and keep user data on the client side whenever possible. Backup ZIP creation, restore inspection, local sync preferences, and most helper workflows run directly in the browser instead of relying on a custom backend.
+The site is built as a static app for GitHub Pages. As much as possible, user actions stay in the browser: backup ZIP generation, restore inspection, local sync preferences, Gold Saucer timing, market lookups, and treasure-map helpers all run without a custom backend owned by this project.
 
 ## Status
 
 This project is actively being developed.
 
-What already works:
+- Core backup and restore helper flows are usable now.
+- Gold Saucer, market lookup, and treasure helper pages are available as the first utility wave.
+- More helper pages can still be added over time.
 
-- FF14 settings backup from a local folder
+## Current Feature Set
+
+- Local FF14 settings backup from a selected folder
 - ZIP generation in the browser
 - Optional upload to OneDrive or Google Drive
 - Restore inspector for existing backup ZIP files
 - Local sync preferences and recent history
-- Helper Lab tools such as XIVAPI search and marketboard math
+- Gold Saucer GATE schedule reference in Taiwan time
+- Item search with XIVAPI
+- Market lookup with Universalis
+- Marketboard math helper
+- Treasure coordinate helper for Dawntrail field zones
+- External tool directory with in-site reference links
 
-What is still evolving:
+## Data Policy
 
-- More FF14 helper tools and data views
-- Better restore guidance
-- More cloud-side backup management features
-- Additional utility pages inspired by existing community tools
+This project does not operate its own backend for storing user content.
+
+- Backup ZIP contents are generated in the browser.
+- Sync preferences and some helper-page defaults may be stored in browser `localStorage`.
+- Market lookups call public third-party APIs directly from the browser.
+- The site does not upload your personal configuration files, query history, or treasure selections to a server controlled by this project.
+
+Cloud upload is only used when you explicitly choose OneDrive or Google Drive, and those uploads go to your own cloud account.
+
+## Reference Sources
+
+The project references community tools and public docs for feature direction and public data access. The site does not directly copy layouts, text, or assets from those sources.
+
+### Feature Inspiration
+
+- [FFXIV Market (beherw)](https://beherw.github.io/FFXIV_Market/)
+- [xiv-tc-toolbox (cycleapple)](https://cycleapple.github.io/xiv-tc-toolbox/)
+- [FFXIV Teamcraft](https://ffxivteamcraft.com/)
+- [Garland Tools](https://garlandtools.org/)
+
+### Data Sources and Docs
+
+- [Universalis](https://universalis.app/)
+- [XIVAPI Docs](https://v2.xivapi.com/docs)
+- [XIVAPI Search Guide](https://v2.xivapi.com/docs/guides/search/)
+- [Console Games Wiki: Gold Saucer Active Time Events](https://ffxiv.consolegameswiki.com/wiki/Gold_Saucer_Active_Time_Events)
 
 ## Project Goals
 
 - Keep the site usable as a static GitHub Pages project
 - Avoid storing user backup data on the site server
 - Build practical FF14 utilities that are useful without requiring a separate app install
-- Provide a clean foundation for future tools in one site
+- Keep the repository readable for public contributors
 
 ## Tech Stack
 
@@ -57,14 +88,14 @@ npm run lint
 
 ## Runtime Configuration
 
-Before deploying cloud upload features, update [runtime-config.json](/d:/FF14_helper/public/runtime-config.json):
+Before deploying cloud upload features, update [public/runtime-config.json](/d:/FF14_helper/public/runtime-config.json):
 
 - `oneDriveClientId`
 - `googleClientId`
 - optionally `oneDriveRedirectUri`
 - optionally `googleRedirectUri`
 
-If the client IDs are left empty, the site still works for local backup ZIP creation, but cloud upload actions remain unavailable.
+If the client IDs are left empty, the site still works for local backup ZIP creation and non-cloud helper pages, but cloud upload actions remain unavailable.
 
 ## GitHub Pages Deployment
 
@@ -72,7 +103,7 @@ This repository is set up for GitHub Pages deployment using GitHub Actions.
 
 Relevant workflow:
 
-- [deploy.yml](/d:/FF14_helper/.github/workflows/deploy.yml)
+- [.github/workflows/deploy.yml](/d:/FF14_helper/.github/workflows/deploy.yml)
 
 Notes:
 
@@ -95,4 +126,6 @@ Use the correct deployed URL when configuring Microsoft Entra and Google Cloud O
 
 This repository is intended to be public and collaborative.
 
-That means the README, site copy, and tooling should stay understandable for outside contributors and end users who discover the project on GitHub.
+- Keep user-facing copy understandable to outside contributors.
+- Keep sources attributed when a feature is inspired by another public tool.
+- Prefer browser-side processing over adding a backend unless there is a strong need.

@@ -7,5 +7,5 @@ export function getErrorMessage(error: unknown): string {
     return error
   }
 
-  return '發生未預期錯誤，請稍後再試。'
+  return 'An unexpected error occurred.'
 }

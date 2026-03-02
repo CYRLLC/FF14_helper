@@ -1,15 +1,14 @@
+import { pageSources } from '../catalog/sources'
 import { toolDirectory } from '../catalog/tools'
+import SourceAttribution from '../components/SourceAttribution'
 
 function ToolsPage() {
   return (
     <div className="page-grid">
       <section className="page-card">
         <div className="section-heading">
-          <h2>External Tools</h2>
-          <p>
-            These are the reference sites this project can learn from. The in-site tools focus on
-            the parts that still work well as a static, browser-only application.
-          </p>
+          <h2>外部工具與參考站</h2>
+          <p>這些是本站會參考的社群工具與資料站。本站只會重整適合純前端靜態網站的部分，不直接複製外站內容。</p>
         </div>
       </section>
 
@@ -23,17 +22,17 @@ function ToolsPage() {
             <p>{tool.description}</p>
             <div className="badge-row">
               <span className={tool.futureIntegration ? 'badge badge--positive' : 'badge'}>
-                {tool.futureIntegration
-                  ? 'Good candidate for in-site features'
-                  : 'Best kept as an external link'}
+                {tool.futureIntegration ? '已納入或適合納入站內功能' : '較適合作外部連結'}
               </span>
             </div>
             <a className="tool-link" href={tool.url} rel="noreferrer" target="_blank">
-              Open Site
+              打開站點
             </a>
           </article>
         ))}
       </section>
+
+      <SourceAttribution entries={pageSources.tools.entries} />
     </div>
   )
 }
