@@ -5,7 +5,7 @@ interface SourceAttributionProps {
   title?: string
 }
 
-function SourceAttribution({ entries, title = '參考來源' }: SourceAttributionProps) {
+function SourceAttribution({ entries, title = '來源說明' }: SourceAttributionProps) {
   const inspirationEntries = entries.filter((entry) => entry.category === 'inspiration')
   const dataEntries = entries.filter((entry) => entry.category === 'data')
 
@@ -14,7 +14,8 @@ function SourceAttribution({ entries, title = '參考來源' }: SourceAttributio
       <div className="section-heading">
         <h2>{title}</h2>
         <p>
-          本站會清楚標示功能參考與資料來源。所有頁面都是重新整理與重新實作，不直接複製原站文案、版型或受保護資產。
+          本站會清楚標示功能參考與資料來源。這些外部網站只作為設計參考、公開資料依據或流程學習，
+          本站介面、程式結構與文案皆為重新整理與重新實作，不直接複製原站內容。
         </p>
       </div>
 
@@ -22,7 +23,7 @@ function SourceAttribution({ entries, title = '參考來源' }: SourceAttributio
         <div className="list-panel">
           <p className="callout-title">功能參考</p>
           {inspirationEntries.length === 0 ? (
-            <p className="muted">這一頁目前沒有額外的功能參考來源。</p>
+            <p className="muted">此頁目前沒有額外標示的功能參考來源。</p>
           ) : (
             <div className="source-list">
               {inspirationEntries.map((entry) => (
@@ -40,7 +41,7 @@ function SourceAttribution({ entries, title = '參考來源' }: SourceAttributio
         <div className="list-panel">
           <p className="callout-title">資料來源</p>
           {dataEntries.length === 0 ? (
-            <p className="muted">這一頁目前沒有額外的資料來源。</p>
+            <p className="muted">此頁目前沒有額外標示的資料來源。</p>
           ) : (
             <div className="source-list">
               {dataEntries.map((entry) => (

@@ -22,9 +22,10 @@ import {
 } from '../craft/simulator'
 import { getErrorMessage } from '../utils/errors'
 
-const STORAGE_KEY = 'ff14-helper.craft.workbench.v2'
+const STORAGE_KEY = 'ff14-helper.craft.workbench.v3'
 
 type TaskFilter = 'all' | 'custom' | 'tribe-craft' | 'tribe-gather'
+type ActionPaletteFilter = 'all' | 'progress' | 'quality' | 'support'
 
 interface SavedCraftState {
   stats: CraftStats
@@ -36,10 +37,54 @@ interface SavedCraftState {
   taskFilter: TaskFilter
 }
 
+const localizedActionNames: Record<CraftActionId, string> = {
+  reflect: '閒靜',
+  muscleMemory: '堅信',
+  veneration: '崇敬',
+  basicSynthesis: '製作',
+  carefulSynthesis: '模範製作',
+  groundwork: '坯料製作',
+  prudentSynthesis: '儉約製作',
+  delicateSynthesis: '精密製作',
+  focusedSynthesis: '專心製作',
+  intensiveSynthesis: '集中製作',
+  innovation: '改革',
+  greatStrides: '闊步',
+  basicTouch: '加工',
+  standardTouch: '中級加工',
+  advancedTouch: '上級加工',
+  prudentTouch: '儉約加工',
+  preparatoryTouch: '坯料加工',
+  focusedTouch: '專心加工',
+  preciseTouch: '集中加工',
+  byregotsBlessing: '比爾格的祝福',
+  trainedFinesse: '工匠的神技',
+  wasteNot: '儉約',
+  wasteNotII: '長期儉約',
+  manipulation: '掌握',
+  mastersMend: '精修',
+  observe: '觀察',
+}
+
+const presetCopy: Record<string, { label: string; note: string }> = {
+  'dt-100-hard': {
+    label: '7.x 100 等高難度範例',
+    note: '適合拿來測試 solver 與高難度耐久配方。',
+  },
+  'collectable-70': {
+    label: '收藏品 70 耐久範例',
+    note: '適合模擬老主顧與收藏品類型的收尾節奏。',
+  },
+  'quick-40': {
+    label: '40 耐久速製範例',
+    note: '適合快速測試短 rotation 與簡化手法。',
+  },
+}
+
 function loadSavedState(): SavedCraftState {
   const fallback: SavedCraftState = {
     stats: createDefaultCraftStats(),
-    recipe: createDefaultCraftRecipe(),
+    recipe: { ...createDefaultCraftRecipe(), source: '預設範例' },
     sequence: [],
     importText: '',
     conditionMode: 'normal',
@@ -59,25 +104,29 @@ function loadSavedState(): SavedCraftState {
   }
 }
 
-function groupActions(): Array<{ title: string; items: CraftActionDefinition[] }> {
+function groupActions(): Array<{ id: ActionPaletteFilter; title: string; description: string; items: CraftActionDefinition[] }> {
   return [
     {
-      title: '起手與進度',
+      id: 'progress',
+      title: '開場與進度',
+      description: '先推進製作進度，適合擺在 rotation 前段。',
       items: craftActionDefinitions.filter((action) =>
         ['reflect', 'muscleMemory', 'veneration', 'basicSynthesis', 'carefulSynthesis', 'groundwork', 'prudentSynthesis', 'focusedSynthesis', 'intensiveSynthesis', 'delicateSynthesis'].includes(action.id),
       ),
     },
     {
+      id: 'quality',
       title: '品質與收尾',
+      description: '提高品質、堆疊內靜與做最終收尾。',
       items: craftActionDefinitions.filter((action) =>
         ['innovation', 'greatStrides', 'basicTouch', 'standardTouch', 'advancedTouch', 'prudentTouch', 'preparatoryTouch', 'focusedTouch', 'preciseTouch', 'trainedFinesse', 'byregotsBlessing'].includes(action.id),
       ),
     },
     {
+      id: 'support',
       title: '耐久與輔助',
-      items: craftActionDefinitions.filter((action) =>
-        ['wasteNot', 'wasteNotII', 'manipulation', 'mastersMend', 'observe'].includes(action.id),
-      ),
+      description: '用來保耐久、開狀態或準備 Focused 技能。',
+      items: craftActionDefinitions.filter((action) => ['wasteNot', 'wasteNotII', 'manipulation', 'mastersMend', 'observe'].includes(action.id)),
     },
   ]
 }
@@ -98,22 +147,27 @@ function formatSupportRole(role: string): string {
 }
 
 function formatConditionMode(mode: CraftConditionMode): string {
-  return mode === 'favorable' ? 'Favorable 假設' : 'Normal 假設'
+  return mode === 'favorable' ? '優良條件循環' : '一般條件循環'
 }
 
 function formatStatus(status: 'running' | 'completed' | 'broken'): string {
-  switch (status) {
-    case 'completed':
-      return '已完成'
-    case 'broken':
-      return '失敗'
-    default:
-      return '進行中'
+  if (status === 'completed') {
+    return '已完工'
   }
+  if (status === 'broken') {
+    return '失敗'
+  }
+  return '進行中'
 }
 
-function copyText(value: string): Promise<void> {
-  return navigator.clipboard.writeText(value)
+function formatRecipeSource(source?: string): string {
+  if (!source) {
+    return '自訂配方'
+  }
+  if (source === 'XIVAPI Recipe') {
+    return 'XIVAPI 配方'
+  }
+  return source
 }
 
 function CraftPage() {
@@ -125,45 +179,86 @@ function CraftPage() {
   const [conditionMode, setConditionMode] = useState<CraftConditionMode>(savedState.conditionMode)
   const [solverObjective, setSolverObjective] = useState<CraftSolverObjective>(savedState.solverObjective)
   const [taskFilter, setTaskFilter] = useState<TaskFilter>(savedState.taskFilter)
+  const [actionQuery, setActionQuery] = useState('')
+  const [paletteFilter, setPaletteFilter] = useState<ActionPaletteFilter>('all')
   const [message, setMessage] = useState<string | null>(null)
-  const [copiedLabel, setCopiedLabel] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [recipeResults, setRecipeResults] = useState<XivapiRecipeSearchResult[]>([])
   const [itemResults, setItemResults] = useState<XivapiSearchResult[]>([])
-  const [searchLoading, setSearchLoading] = useState(false)
   const [selectedRecipeRowId, setSelectedRecipeRowId] = useState<number | null>(null)
+  const [searchLoading, setSearchLoading] = useState(false)
   const [solverLoading, setSolverLoading] = useState(false)
   const [solverNotes, setSolverNotes] = useState<string[]>([])
+  const [copiedLabel, setCopiedLabel] = useState<string | null>(null)
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ stats, recipe, sequence, importText, conditionMode, solverObjective, taskFilter } satisfies SavedCraftState),
+      )
     }
-
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ stats, recipe, sequence, importText, conditionMode, solverObjective, taskFilter } satisfies SavedCraftState),
-    )
   }, [conditionMode, importText, recipe, sequence, solverObjective, stats, taskFilter])
 
   const simulation = useMemo(() => simulateCraft(stats, recipe, sequence, { conditionMode }), [conditionMode, recipe, sequence, stats])
   const actionGroups = useMemo(() => groupActions(), [])
-  const macroChunks = useMemo(() => buildMacroChunks(sequence), [sequence])
+  const filteredActionGroups = useMemo(
+    () =>
+      actionGroups
+        .filter((group) => paletteFilter === 'all' || group.id === paletteFilter)
+        .map((group) => ({
+          ...group,
+          items: group.items.filter((action) => {
+            const keyword = actionQuery.trim().toLocaleLowerCase('en-US')
+            if (!keyword) {
+              return true
+            }
 
-  const relevantTasks = useMemo(() => {
-    return collectionEntries.filter((entry) => {
-      switch (taskFilter) {
-        case 'custom':
-          return entry.category === 'custom-deliveries'
-        case 'tribe-craft':
-          return entry.category === 'allied-societies' && entry.supportRoles.includes('crafting')
-        case 'tribe-gather':
-          return entry.category === 'allied-societies' && entry.supportRoles.includes('gathering')
-        default:
-          return entry.category === 'custom-deliveries' || entry.supportRoles.includes('crafting') || entry.supportRoles.includes('gathering')
-      }
-    })
-  }, [taskFilter])
+            return [localizedActionNames[action.id], action.label, action.description]
+              .join(' ')
+              .toLocaleLowerCase('en-US')
+              .includes(keyword)
+          }),
+        }))
+        .filter((group) => group.items.length > 0),
+    [actionGroups, actionQuery, paletteFilter],
+  )
+  const macroChunks = useMemo(() => buildMacroChunks(sequence), [sequence])
+  const sequenceCpEstimate = useMemo(
+    () => sequence.reduce((total, actionId) => total + (craftActionDefinitions.find((entry) => entry.id === actionId)?.cpCost ?? 0), 0),
+    [sequence],
+  )
+  const sequenceSuggestions = useMemo(() => {
+    if (sequence.length === 0) {
+      return ['reflect', 'muscleMemory', 'veneration'] as CraftActionId[]
+    }
+
+    if (simulation.completionPercent < 60) {
+      return ['veneration', 'groundwork', 'carefulSynthesis'] as CraftActionId[]
+    }
+
+    if (simulation.qualityPercent < 80) {
+      return ['innovation', 'greatStrides', 'basicTouch'] as CraftActionId[]
+    }
+
+    return ['byregotsBlessing', 'carefulSynthesis', 'mastersMend'] as CraftActionId[]
+  }, [sequence.length, simulation.completionPercent, simulation.qualityPercent])
+  const relevantTasks = useMemo(
+    () =>
+      collectionEntries.filter((entry) => {
+        switch (taskFilter) {
+          case 'custom':
+            return entry.category === 'custom-deliveries'
+          case 'tribe-craft':
+            return entry.category === 'allied-societies' && entry.supportRoles.includes('crafting')
+          case 'tribe-gather':
+            return entry.category === 'allied-societies' && entry.supportRoles.includes('gathering')
+          default:
+            return entry.category === 'custom-deliveries' || entry.supportRoles.includes('crafting') || entry.supportRoles.includes('gathering')
+        }
+      }),
+    [taskFilter],
+  )
 
   function updateStats<K extends keyof CraftStats>(key: K, value: number): void {
     setStats((current) => ({ ...current, [key]: value }))
@@ -175,7 +270,12 @@ function CraftPage() {
 
   function addAction(actionId: CraftActionId): void {
     setSequence((current) => [...current, actionId])
-    setMessage(`已加入 ${craftActionDefinitions.find((action) => action.id === actionId)?.label ?? actionId}。`)
+    setMessage(`已加入動作：${localizedActionNames[actionId]}。`)
+  }
+
+  function removeLastAction(): void {
+    setSequence((current) => current.slice(0, -1))
+    setMessage('已移除最後一個動作。')
   }
 
   function applyPreset(presetId: string): void {
@@ -183,66 +283,23 @@ function CraftPage() {
     if (!preset) {
       return
     }
-
-    setRecipe({ ...preset.recipe })
+    setRecipe({ ...preset.recipe, source: '預設範例' })
     setSelectedRecipeRowId(null)
-    setMessage(`已套用預設配方：${preset.label}。`)
-  }
-
-  function moveAction(index: number, direction: -1 | 1): void {
-    setSequence((current) => {
-      const next = [...current]
-      const targetIndex = index + direction
-      ;[next[index], next[targetIndex]] = [next[targetIndex], next[index]]
-      return next
-    })
-  }
-
-  function removeAction(index: number): void {
-    setSequence((current) => current.filter((_, actionIndex) => actionIndex !== index))
-  }
-
-  async function handleCopy(label: string, value: string): Promise<void> {
-    try {
-      await copyText(value)
-      setCopiedLabel(label)
-      setMessage('內容已複製到剪貼簿。')
-      window.setTimeout(() => setCopiedLabel((current) => (current === label ? null : current)), 1500)
-    } catch (error) {
-      setMessage(getErrorMessage(error))
-    }
-  }
-
-  function handleImportMacro(): void {
-    const parsed = parseMacroText(importText)
-    if (parsed.length === 0) {
-      setMessage('沒有辨識到可用的動作名稱或 macro 指令。')
-      return
-    }
-
-    setSequence(parsed)
-    setMessage(`已匯入 ${parsed.length} 個動作。`)
+    setMessage(`已套用範例配方：${presetCopy[presetId]?.label ?? preset.id}。`)
   }
 
   async function handleRecipeSearch(): Promise<void> {
     const term = searchQuery.trim()
     if (term.length < 2) {
-      setMessage('請至少輸入 2 個字元。')
+      setMessage('請至少輸入 2 個字元再搜尋。')
       return
     }
-
     setSearchLoading(true)
-    setMessage(null)
-
     try {
-      const [recipes, items] = await Promise.all([
-        searchRecipeResults(term, 8),
-        searchXivapi(term, 'Item', 8),
-      ])
-
+      const [recipes, items] = await Promise.all([searchRecipeResults(term, 8), searchXivapi(term, 'Item', 8)])
       setRecipeResults(recipes)
       setItemResults(items)
-      setMessage(`已完成搜尋，找到 ${recipes.length} 筆配方與 ${items.length} 筆道具。`)
+      setMessage(`已找到 ${recipes.length} 筆配方結果與 ${items.length} 筆道具結果。`)
     } catch (error) {
       setMessage(getErrorMessage(error))
     } finally {
@@ -281,12 +338,10 @@ function CraftPage() {
     try {
       const candidates = await searchRecipeResults(item.name, 8)
       const matched = candidates.find((entry) => entry.name.toLocaleLowerCase('en-US') === item.name.toLocaleLowerCase('en-US')) ?? candidates[0]
-
       if (!matched) {
         setMessage(`找不到對應配方：${item.name}。`)
         return
       }
-
       await applyRecipeFromRow(matched.rowId)
     } catch (error) {
       setMessage(getErrorMessage(error))
@@ -295,7 +350,6 @@ function CraftPage() {
 
   async function handleRunSolver(): Promise<void> {
     setSolverLoading(true)
-
     try {
       const result = solveCraftSequence(stats, recipe, {
         objective: solverObjective,
@@ -305,18 +359,21 @@ function CraftPage() {
       })
 
       if (!result) {
-        setSolverNotes(['Solver 沒有產生候選結果。'])
-        setMessage('Solver 沒有找到可用序列。')
+        setSolverNotes(['目前找不到可用的候選序列。', '建議提高能力值、降低配方難度，或改用手動排動作。'])
+        setMessage('Solver 沒有找到可用結果。')
         return
       }
 
+      setSequence(result.sequence)
       setSolverNotes([
-        ...result.notes,
-        `探索節點：${result.exploredStates.toLocaleString('zh-TW')}。`,
+        conditionMode === 'favorable' ? '這次 solver 以優良條件循環作為估算前提。' : '這次 solver 以一般條件循環作為估算前提。',
+        result.simulation.finalState.status === 'completed'
+          ? '已找到可完工的候選序列。'
+          : '目前找到的是最接近完工的候選序列。',
+        `探索狀態數：${result.exploredStates.toLocaleString('zh-TW')}。`,
         `預估結果：${formatStatus(result.simulation.finalState.status)}，進度 ${result.simulation.completionPercent}% / 品質 ${result.simulation.qualityPercent}%。`,
       ])
-      setSequence(result.sequence)
-      setMessage('已將 solver 產生的序列套用到工作台。')
+      setMessage('已套用 solver 產生的序列。')
     } catch (error) {
       setMessage(getErrorMessage(error))
     } finally {
@@ -324,16 +381,25 @@ function CraftPage() {
     }
   }
 
-  function handleReset(): void {
-    setStats(createDefaultCraftStats())
-    setRecipe(createDefaultCraftRecipe())
-    setSequence([])
-    setImportText('')
-    setConditionMode('normal')
-    setSolverObjective('balanced')
-    setSelectedRecipeRowId(null)
-    setSolverNotes([])
-    setMessage('已重設製作助手。')
+  function handleImportMacro(): void {
+    const parsed = parseMacroText(importText)
+    if (parsed.length === 0) {
+      setMessage('沒有辨識到可用的 macro 動作。')
+      return
+    }
+    setSequence(parsed)
+    setMessage(`已從 macro 匯入 ${parsed.length} 個動作。`)
+  }
+
+  async function handleCopy(label: string, value: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopiedLabel(label)
+      setMessage('已複製到剪貼簿。')
+      window.setTimeout(() => setCopiedLabel((current) => (current === label ? null : current)), 1200)
+    } catch (error) {
+      setMessage(getErrorMessage(error))
+    }
   }
 
   return (
@@ -342,245 +408,142 @@ function CraftPage() {
         <p className="eyebrow">Craft Workbench</p>
         <h2>製作助手</h2>
         <p className="lead">
-          這一頁把 `BestCraft` 類型的工作流整理成本站自己的製作面板，重點是三件事：
-          `配方搜尋與帶入`、`完整 rotations 模擬`、`站內 solver`。資料搜尋使用 XIVAPI v2，
-          介面與文案則完全重新整理成本站風格。
+          先帶入配方與能力，再排技能或跑 solver，最後看模擬結果與 macro。
+          技能名稱直接對照 BestCraft 的繁體中文語系，避免和常見中文用法脫節。
         </p>
         <div className="badge-row">
-          <span className="badge badge--positive">站內完整工作流</span>
-          <span className="badge">BestCraft 參考來源已標註</span>
-          <span className="badge badge--warning">XIVAPI v2 目前無繁中配方名稱</span>
+          <span className="badge badge--positive">使用 BestCraft 繁中技能名稱</span>
+          <span className="badge">支援 XIVAPI 配方搜尋</span>
+          <span className="badge badge--warning">Solver 為站內估算工具，結果請自行驗證</span>
         </div>
-        <div className="button-row">
-          <Link className="button button--ghost" to="/collection">
-            查看老主顧 / 友好部落清單
-          </Link>
-          <a className="button button--ghost" href="https://github.com/Tnze/ffxiv-best-craft" rel="noreferrer" target="_blank">
-            查看 BestCraft 原始專案
-          </a>
-        </div>
-      </section>
-
-      <section className="source-grid">
-        <article className="page-card">
-          <div className="section-heading">
-            <h2>製作者屬性</h2>
-            <p>這些數值會直接影響進度、品質與 solver 結果。</p>
-          </div>
-          <div className="field-grid">
-            <label className="field">
-              <span className="field-label">等級</span>
-              <input className="input-text" min="1" onChange={(event) => updateStats('level', Number(event.target.value))} type="number" value={stats.level} />
-            </label>
-            <label className="field">
-              <span className="field-label">Craftsmanship</span>
-              <input className="input-text" min="1" onChange={(event) => updateStats('craftsmanship', Number(event.target.value))} type="number" value={stats.craftsmanship} />
-            </label>
-            <label className="field">
-              <span className="field-label">Control</span>
-              <input className="input-text" min="1" onChange={(event) => updateStats('control', Number(event.target.value))} type="number" value={stats.control} />
-            </label>
-            <label className="field">
-              <span className="field-label">CP</span>
-              <input className="input-text" min="1" onChange={(event) => updateStats('cp', Number(event.target.value))} type="number" value={stats.cp} />
-            </label>
-          </div>
-        </article>
-
-        <article className="page-card">
-          <div className="section-heading">
-            <h2>Solver 與條件假設</h2>
-            <p>條件模式是推演假設，不是遊戲內隨機條件的逐格還原。</p>
-          </div>
-          <div className="field-grid">
-            <label className="field">
-              <span className="field-label">條件模式</span>
-              <select className="input-select" onChange={(event) => setConditionMode(event.target.value as CraftConditionMode)} value={conditionMode}>
-                <option value="normal">Normal 假設</option>
-                <option value="favorable">Favorable 假設</option>
-              </select>
-            </label>
-            <label className="field">
-              <span className="field-label">Solver 目標</span>
-              <select className="input-select" onChange={(event) => setSolverObjective(event.target.value as CraftSolverObjective)} value={solverObjective}>
-                <option value="balanced">平衡</option>
-                <option value="quality">品質優先</option>
-                <option value="completion">完工優先</option>
-              </select>
-            </label>
-          </div>
-          <div className="button-row">
-            <button className="button button--primary" disabled={solverLoading} onClick={() => void handleRunSolver()} type="button">
-              {solverLoading ? 'Solver 計算中…' : '產生建議序列'}
-            </button>
-            <button className="button button--ghost" onClick={handleReset} type="button">
-              全部重設
-            </button>
-          </div>
-          {solverNotes.length > 0 ? (
-            <div className="callout">
-              <span className="callout-title">Solver 摘要</span>
-              <div className="detail-list">
-                {solverNotes.map((note) => (
-                  <span key={note}>{note}</span>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </article>
       </section>
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>配方搜尋與自動帶入</h2>
-          <p>
-            使用 XIVAPI v2 搜尋 `Recipe / Item`。由於 XIVAPI v2 目前沒有繁中配方名稱，這裡建議用
-            英文或日文關鍵字搜尋；帶入後頁面仍會用繁中說明工作流。
-          </p>
+          <h2>序列總覽</h2>
+          <p>先看目前 rotation 的長度與結果，再決定要補動作、回退，或直接交給 solver。</p>
         </div>
-        <div className="field-grid">
-          <label className="field">
-            <span className="field-label">搜尋關鍵字</span>
-            <input className="input-text" onChange={(event) => setSearchQuery(event.target.value)} placeholder="例如 Tacos、Bronze Ingot、Potion" type="text" value={searchQuery} />
-          </label>
+        <div className="stats-grid">
+          <article className="stat-card"><div className="stat-label">動作數</div><div className="stat-value">{sequence.length}</div></article>
+          <article className="stat-card"><div className="stat-label">CP 粗估</div><div className="stat-value">{sequenceCpEstimate}</div></article>
+          <article className="stat-card"><div className="stat-label">進度</div><div className="stat-value">{simulation.completionPercent}%</div></article>
+          <article className="stat-card"><div className="stat-label">品質</div><div className="stat-value">{simulation.qualityPercent}%</div></article>
+          <article className="stat-card"><div className="stat-label">狀態</div><div className="stat-value">{formatStatus(simulation.finalState.status)}</div></article>
+          <article className="stat-card"><div className="stat-label">剩餘耐久</div><div className="stat-value">{simulation.finalState.durability}</div></article>
         </div>
         <div className="button-row">
-          <button className="button button--primary" disabled={searchLoading} onClick={() => void handleRecipeSearch()} type="button">
-            {searchLoading ? '搜尋中…' : '搜尋配方 / 道具'}
+          <button className="button button--ghost" disabled={sequence.length === 0} onClick={removeLastAction} type="button">
+            撤銷最後一步
+          </button>
+          <button className="button button--ghost" disabled={sequence.length === 0} onClick={() => setSequence([])} type="button">
+            清空序列
           </button>
         </div>
-        <div className="source-grid">
-          <article className="list-panel">
-            <p className="callout-title">配方結果</p>
-            {recipeResults.length === 0 ? (
-              <p className="muted">尚未搜尋，或目前沒有找到配方結果。</p>
-            ) : (
-              <div className="history-list">
-                {recipeResults.map((result) => (
-                  <article key={result.rowId} className="history-item">
-                    <div className="history-item__top">
-                      <strong>{result.name}</strong>
-                      <span className={selectedRecipeRowId === result.rowId ? 'badge badge--positive' : 'badge'}>
-                        {result.craftTypeName ?? 'Unknown'}
-                      </span>
-                    </div>
-                    <p className="muted">Recipe Row #{result.rowId}</p>
-                    <div className="button-row">
-                      <button className="button button--ghost" onClick={() => void applyRecipeFromRow(result.rowId)} type="button">
-                        帶入這個配方
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </article>
-
-          <article className="list-panel">
-            <p className="callout-title">道具結果</p>
-            {itemResults.length === 0 ? (
-              <p className="muted">尚未搜尋，或目前沒有找到道具結果。</p>
-            ) : (
-              <div className="history-list">
-                {itemResults.map((item) => (
-                  <article key={item.rowId} className="history-item">
-                    <div className="history-item__top">
-                      <strong>{item.name}</strong>
-                      <span className="badge">Item Row #{item.rowId}</span>
-                    </div>
-                    <div className="button-row">
-                      <button className="button button--ghost" onClick={() => void applyRecipeFromItem(item)} type="button">
-                        找對應配方並帶入
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </article>
+        <div className="sequence-chip-list">
+          {sequence.length === 0 ? (
+            <span className="muted">目前還沒有任何動作。</span>
+          ) : (
+            sequence.map((actionId, index) => (
+              <span key={`${actionId}-${index}`} className="sequence-chip">
+                {index + 1}. {localizedActionNames[actionId]}
+              </span>
+            ))
+          )}
+        </div>
+        <div className="callout">
+          <span className="callout-title">下一手建議</span>
+          <div className="badge-row">
+            {sequenceSuggestions.map((actionId) => (
+              <button key={actionId} className="button button--ghost" onClick={() => addAction(actionId)} type="button">
+                加入 {localizedActionNames[actionId]}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
       <section className="source-grid">
         <article className="page-card">
           <div className="section-heading">
-            <h2>配方設定</h2>
-            <p>可以手動調整，也可以直接套用預設或 API 帶入的配方。</p>
-          </div>
-          <div className="choice-row">
-            {craftRecipePresets.map((preset) => (
-              <button key={preset.id} className="choice-button" onClick={() => applyPreset(preset.id)} type="button">
-                <strong>{preset.label}</strong>
-                <p className="muted">{preset.note}</p>
-              </button>
-            ))}
+            <h2>步驟 1：帶入配方與能力</h2>
+            <p>先用配方搜尋或範例配方建立工作台，再確認你的 Craftsmanship / Control / CP。</p>
           </div>
           <div className="field-grid">
             <label className="field">
-              <span className="field-label">配方名稱</span>
-              <input className="input-text" onChange={(event) => updateRecipe('name', event.target.value)} type="text" value={recipe.name} />
+              <span className="field-label">搜尋配方或道具</span>
+              <input
+                className="input-text"
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="例如 Bronze Ingot / Tacos / Potion"
+                type="text"
+                value={searchQuery}
+              />
             </label>
-            <label className="field">
-              <span className="field-label">配方等級</span>
-              <input className="input-text" min="1" onChange={(event) => updateRecipe('level', Number(event.target.value))} type="number" value={recipe.level} />
-            </label>
-            <label className="field">
-              <span className="field-label">Difficulty</span>
-              <input className="input-text" min="1" onChange={(event) => updateRecipe('difficulty', Number(event.target.value))} type="number" value={recipe.difficulty} />
-            </label>
-            <label className="field">
-              <span className="field-label">Quality 上限</span>
-              <input className="input-text" min="0" onChange={(event) => updateRecipe('quality', Number(event.target.value))} type="number" value={recipe.quality} />
-            </label>
-            <label className="field">
-              <span className="field-label">Durability</span>
-              <input className="input-text" min="1" onChange={(event) => updateRecipe('durability', Number(event.target.value))} type="number" value={recipe.durability} />
-            </label>
-            <label className="field">
-              <span className="field-label">初始品質</span>
-              <input className="input-text" min="0" onChange={(event) => updateRecipe('initialQuality', Number(event.target.value))} type="number" value={recipe.initialQuality} />
-            </label>
-            <label className="field">
-              <span className="field-label">Progress Divider</span>
-              <input className="input-text" min="1" onChange={(event) => updateRecipe('progressDivider', Number(event.target.value))} type="number" value={recipe.progressDivider} />
-            </label>
-            <label className="field">
-              <span className="field-label">Progress Modifier</span>
-              <input className="input-text" min="1" onChange={(event) => updateRecipe('progressModifier', Number(event.target.value))} type="number" value={recipe.progressModifier} />
-            </label>
-            <label className="field">
-              <span className="field-label">Quality Divider</span>
-              <input className="input-text" min="1" onChange={(event) => updateRecipe('qualityDivider', Number(event.target.value))} type="number" value={recipe.qualityDivider} />
-            </label>
-            <label className="field">
-              <span className="field-label">Quality Modifier</span>
-              <input className="input-text" min="1" onChange={(event) => updateRecipe('qualityModifier', Number(event.target.value))} type="number" value={recipe.qualityModifier} />
-            </label>
+            <label className="field"><span className="field-label">Crafter Level</span><input className="input-text" min="1" onChange={(event) => updateStats('level', Number(event.target.value))} type="number" value={stats.level} /></label>
+            <label className="field"><span className="field-label">Craftsmanship</span><input className="input-text" min="1" onChange={(event) => updateStats('craftsmanship', Number(event.target.value))} type="number" value={stats.craftsmanship} /></label>
+            <label className="field"><span className="field-label">Control</span><input className="input-text" min="1" onChange={(event) => updateStats('control', Number(event.target.value))} type="number" value={stats.control} /></label>
+            <label className="field"><span className="field-label">CP</span><input className="input-text" min="1" onChange={(event) => updateStats('cp', Number(event.target.value))} type="number" value={stats.cp} /></label>
+          </div>
+          <div className="button-row">
+            <button className="button button--primary" disabled={searchLoading} onClick={() => void handleRecipeSearch()} type="button">
+              {searchLoading ? '搜尋中...' : '搜尋配方'}
+            </button>
+            {craftRecipePresets.map((preset) => (
+              <button key={preset.id} className="button button--ghost" onClick={() => applyPreset(preset.id)} type="button">
+                {presetCopy[preset.id]?.label ?? preset.id}
+              </button>
+            ))}
+          </div>
+          <div className="history-list">
+            {recipeResults.slice(0, 4).map((result) => (
+              <article key={result.rowId} className="history-item">
+                <div className="history-item__top">
+                  <strong>{result.name}</strong>
+                  <span className={selectedRecipeRowId === result.rowId ? 'badge badge--positive' : 'badge'}>
+                    {result.craftTypeName ?? 'Unknown'}
+                  </span>
+                </div>
+                <div className="button-row">
+                  <button className="button button--ghost" onClick={() => void applyRecipeFromRow(result.rowId)} type="button">
+                    帶入配方
+                  </button>
+                </div>
+              </article>
+            ))}
+            {itemResults.slice(0, 3).map((item) => (
+              <article key={`item-${item.rowId}`} className="history-item">
+                <div className="history-item__top">
+                  <strong>{item.name}</strong>
+                  <span className="badge">Item</span>
+                </div>
+                <div className="button-row">
+                  <button className="button button--ghost" onClick={() => void applyRecipeFromItem(item)} type="button">
+                    嘗試找配方
+                  </button>
+                </div>
+              </article>
+            ))}
           </div>
         </article>
 
         <article className="page-card">
           <div className="section-heading">
-            <h2>目前帶入的配方資訊</h2>
-            <p>這一塊會顯示 API 帶入後的工作資訊，方便你確認是不是正確配方。</p>
+            <h2>目前配方</h2>
+            <p>這裡是工作台的核心參數。若 API 沒帶到完整資料，也可以手動微調。</p>
           </div>
-          <div className="stats-grid">
-            <article className="stat-card">
-              <div className="stat-label">來源</div>
-              <div className="stat-value">{recipe.source ?? '手動輸入 / 預設'}</div>
-            </article>
-            <article className="stat-card">
-              <div className="stat-label">職業</div>
-              <div className="stat-value">{recipe.jobName ?? '未指定'}</div>
-            </article>
-            <article className="stat-card">
-              <div className="stat-label">HQ</div>
-              <div className="stat-value">{recipe.canHq === false ? '不可 HQ' : '可 HQ'}</div>
-            </article>
-            <article className="stat-card">
-              <div className="stat-label">產量</div>
-              <div className="stat-value">{recipe.yield ?? 1}</div>
-            </article>
+          <div className="field-grid">
+            <label className="field"><span className="field-label">配方名稱</span><input className="input-text" onChange={(event) => updateRecipe('name', event.target.value)} type="text" value={recipe.name} /></label>
+            <label className="field"><span className="field-label">配方等級</span><input className="input-text" min="1" onChange={(event) => updateRecipe('level', Number(event.target.value))} type="number" value={recipe.level} /></label>
+            <label className="field"><span className="field-label">Difficulty</span><input className="input-text" min="1" onChange={(event) => updateRecipe('difficulty', Number(event.target.value))} type="number" value={recipe.difficulty} /></label>
+            <label className="field"><span className="field-label">Quality</span><input className="input-text" min="0" onChange={(event) => updateRecipe('quality', Number(event.target.value))} type="number" value={recipe.quality} /></label>
+            <label className="field"><span className="field-label">Durability</span><input className="input-text" min="1" onChange={(event) => updateRecipe('durability', Number(event.target.value))} type="number" value={recipe.durability} /></label>
+            <label className="field"><span className="field-label">初始品質</span><input className="input-text" min="0" onChange={(event) => updateRecipe('initialQuality', Number(event.target.value))} type="number" value={recipe.initialQuality} /></label>
+          </div>
+          <div className="badge-row">
+            <span className="badge">來源：{formatRecipeSource(recipe.source)}</span>
+            <span className="badge">職業：{recipe.jobName ?? '未指定'}</span>
+            <span className="badge">{recipe.canHq === false ? '不可 HQ' : '可 HQ'}</span>
+            {recipe.yield ? <span className="badge">產出數量：{recipe.yield}</span> : null}
           </div>
           {recipe.ingredients && recipe.ingredients.length > 0 ? (
             <div className="history-list">
@@ -595,193 +558,153 @@ function CraftPage() {
             </div>
           ) : (
             <div className="empty-state">
-              <strong>目前沒有材料清單。</strong>
-              <p>如果你用手動輸入配方，這裡會保持空白；使用 API 帶入時才會顯示材料。</p>
+              <strong>目前沒有材料明細</strong>
+              <p>如果是自訂配方或範例配方，沒有材料明細是正常的。</p>
             </div>
           )}
-        </article>
-      </section>
-
-      <section className="page-card">
-        <div className="section-heading">
-          <h2>任務來源篩選</h2>
-          <p>這一區把老主顧與友好部落資料接回製作頁，方便你快速鎖定常做內容。</p>
-        </div>
-        <div className="choice-row">
-          <button className={taskFilter === 'all' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('all')} type="button">全部</button>
-          <button className={taskFilter === 'custom' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('custom')} type="button">老主顧</button>
-          <button className={taskFilter === 'tribe-craft' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('tribe-craft')} type="button">友好部落 / 製作</button>
-          <button className={taskFilter === 'tribe-gather' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('tribe-gather')} type="button">友好部落 / 採集</button>
-        </div>
-        <div className="history-list">
-          {relevantTasks.map((entry) => (
-            <article key={entry.id} className="history-item">
-              <div className="history-item__top">
-                <strong>{entry.name}</strong>
-                <span className="badge">{entry.category === 'custom-deliveries' ? '老主顧' : '友好部落'}</span>
-              </div>
-              <p className="muted">{entry.location} | Patch {entry.patch}</p>
-              <p className="muted">支援：{entry.supportRoles.map((role) => formatSupportRole(role)).join(' / ')}</p>
-              <p className="muted">{entry.unlockSummary}</p>
-              <div className="button-row">
-                <Link className="button button--ghost" to="/collection">
-                  前往收藏追蹤
-                </Link>
-                {entry.sourceUrl ? (
-                  <a className="button button--ghost" href={entry.sourceUrl} rel="noreferrer" target="_blank">
-                    查看來源資料
-                  </a>
-                ) : null}
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-      <section className="page-card">
-        <div className="section-heading">
-          <h2>技能面板</h2>
-          <p>技能名稱保留英文，以降低與外部工具或巨集對照時的辨識成本；說明維持繁中。</p>
-        </div>
-        <div className="source-grid">
-          {actionGroups.map((group) => (
-            <article key={group.title} className="list-panel">
-              <p className="callout-title">{group.title}</p>
-              <div className="history-list">
-                {group.items.map((action) => (
-                  <button key={action.id} className="choice-button" onClick={() => addAction(action.id)} type="button">
-                    <strong>{action.label}</strong>
-                    <p className="muted">CP {action.cpCost} | 耐久 {action.durabilityCost}</p>
-                    <p className="muted">{action.description}</p>
-                  </button>
-                ))}
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="page-card">
-        <div className="section-heading">
-          <h2>目前序列與模擬結果</h2>
-          <p>你可以手動排動作，也可以先讓 solver 產生，再回來手調收尾。</p>
-        </div>
-        <div className="stats-grid">
-          <article className="stat-card">
-            <div className="stat-label">步數</div>
-            <div className="stat-value">{sequence.length}</div>
-          </article>
-          <article className="stat-card">
-            <div className="stat-label">進度</div>
-            <div className="stat-value">{simulation.finalState.progress} / {recipe.difficulty}</div>
-          </article>
-          <article className="stat-card">
-            <div className="stat-label">品質</div>
-            <div className="stat-value">{simulation.finalState.quality} / {recipe.quality}</div>
-          </article>
-          <article className="stat-card">
-            <div className="stat-label">剩餘耐久</div>
-            <div className="stat-value">{simulation.finalState.durability}</div>
-          </article>
-          <article className="stat-card">
-            <div className="stat-label">剩餘 CP</div>
-            <div className="stat-value">{simulation.finalState.cp}</div>
-          </article>
-          <article className="stat-card">
-            <div className="stat-label">HQ 估算</div>
-            <div className="stat-value">{simulation.hqPercent}%</div>
-          </article>
-        </div>
-        <div className="callout">
-          <span className="callout-title">模擬狀態</span>
-          <div className="detail-list">
-            <span>條件模式：{formatConditionMode(conditionMode)}</span>
-            <span>最終狀態：{formatStatus(simulation.finalState.status)}</span>
-            <span>完成度：{simulation.completionPercent}%</span>
-            <span>品質達成：{simulation.qualityPercent}%</span>
-            <span>Inner Quiet：{simulation.finalState.innerQuiet}</span>
-          </div>
-        </div>
-        <div className="button-row">
-          <button className="button button--ghost" onClick={() => setSequence([])} type="button">清空序列</button>
-          <button className="button button--ghost" onClick={() => setSequence((current) => [...current, 'observe'])} type="button">快速插入 Observe</button>
-        </div>
-        {sequence.length === 0 ? (
-          <div className="empty-state">
-            <strong>目前還沒有序列。</strong>
-            <p>可以從技能面板逐手加入，也可以先使用 solver 產生一版建議。</p>
-          </div>
-        ) : (
           <div className="history-list">
-            {sequence.map((actionId, index) => {
-              const action = craftActionDefinitions.find((entry) => entry.id === actionId)
-              const step = simulation.steps[index]
-              return (
-                <article key={`${actionId}-${index}`} className="history-item">
-                  <div className="history-item__top">
-                    <strong>#{index + 1} | {action?.label ?? actionId}</strong>
-                    <span className={step?.isValid ? 'badge badge--positive' : 'badge badge--warning'}>
-                      {step?.isValid ? step.condition.toUpperCase() : '無效'}
-                    </span>
-                  </div>
-                  <p className="muted">
-                    {step
-                      ? `進度 +${step.progressGain} / 品質 +${step.qualityGain} / 耐久 ${step.durabilityChange} / CP ${step.cpChange}`
-                      : '尚未計算'}
-                  </p>
-                  {step?.note ? <p className="muted">{step.note}</p> : null}
-                  <div className="button-row">
-                    <button className="button button--ghost" disabled={index === 0} onClick={() => moveAction(index, -1)} type="button">往前</button>
-                    <button className="button button--ghost" disabled={index === sequence.length - 1} onClick={() => moveAction(index, 1)} type="button">往後</button>
-                    <button className="button button--ghost" onClick={() => removeAction(index)} type="button">刪除</button>
-                  </div>
-                </article>
-              )
-            })}
+            {craftRecipePresets.map((preset) => (
+              <article key={`${preset.id}-note`} className="history-item">
+                <div className="history-item__top">
+                  <strong>{presetCopy[preset.id]?.label ?? preset.id}</strong>
+                  <span className="badge">範例</span>
+                </div>
+                <p className="muted">{presetCopy[preset.id]?.note ?? '站內範例配方。'}</p>
+              </article>
+            ))}
           </div>
-        )}
+        </article>
       </section>
 
       <section className="source-grid">
         <article className="page-card">
           <div className="section-heading">
-            <h2>Macro 匯入 / 匯出</h2>
-            <p>可以貼現有巨集進來解析，也可以把目前序列切成遊戲內可貼上的 macro 分段。</p>
+            <h2>步驟 2：排技能與調整序列</h2>
+            <p>先篩技能，再加入 rotation；不想手排時就直接跑 solver。</p>
           </div>
-          <label className="field">
-            <span className="field-label">匯入文字</span>
-            <textarea className="input-text" onChange={(event) => setImportText(event.target.value)} rows={6} value={importText} />
-          </label>
-          <div className="button-row">
-            <button className="button button--ghost" onClick={handleImportMacro} type="button">解析 macro 文字</button>
-            <button className="button button--ghost" onClick={() => setImportText('')} type="button">清空文字</button>
+          <div className="field-grid">
+            <label className="field">
+              <span className="field-label">搜尋技能</span>
+              <input className="input-text" onChange={(event) => setActionQuery(event.target.value)} placeholder="可搜中文名、英文名或描述" type="text" value={actionQuery} />
+            </label>
+            <label className="field">
+              <span className="field-label">技能分組</span>
+              <select className="input-select" onChange={(event) => setPaletteFilter(event.target.value as ActionPaletteFilter)} value={paletteFilter}>
+                <option value="all">全部技能</option>
+                <option value="progress">開場與進度</option>
+                <option value="quality">品質與收尾</option>
+                <option value="support">耐久與輔助</option>
+              </select>
+            </label>
+          </div>
+          <div className="history-list">
+            {filteredActionGroups.map((group) => (
+              <article key={group.id} className="list-panel">
+                <p className="callout-title">{group.title}</p>
+                <p className="muted">{group.description}</p>
+                <div className="choice-row">
+                  {group.items.map((action) => (
+                    <button key={action.id} className="choice-button" onClick={() => addAction(action.id)} type="button">
+                      <strong>{localizedActionNames[action.id]}</strong>
+                      <p className="muted">{action.label} | CP {action.cpCost} | 耐久 {action.durabilityCost}</p>
+                    </button>
+                  ))}
+                </div>
+              </article>
+            ))}
           </div>
         </article>
 
         <article className="page-card">
           <div className="section-heading">
-            <h2>Macro 輸出</h2>
-            <p>每段最多 15 行，直接對應遊戲內 macro 限制。</p>
+            <h2>目前序列與 Solver</h2>
+            <p>手動排完後可以直接跑 solver，比較目前序列與自動候選之間的差距。</p>
           </div>
-          {macroChunks.length === 0 ? (
+          <div className="field-grid">
+            <label className="field">
+              <span className="field-label">條件模式</span>
+              <select className="input-select" onChange={(event) => setConditionMode(event.target.value as CraftConditionMode)} value={conditionMode}>
+                <option value="normal">一般條件</option>
+                <option value="favorable">優良條件循環</option>
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-label">Solver 目標</span>
+              <select className="input-select" onChange={(event) => setSolverObjective(event.target.value as CraftSolverObjective)} value={solverObjective}>
+                <option value="balanced">平衡</option>
+                <option value="quality">品質優先</option>
+                <option value="completion">完工優先</option>
+              </select>
+            </label>
+          </div>
+          <div className="button-row">
+            <button className="button button--primary" disabled={solverLoading} onClick={() => void handleRunSolver()} type="button">
+              {solverLoading ? '計算中...' : '執行 Solver'}
+            </button>
+            <button className="button button--ghost" onClick={() => setSequence([])} type="button">
+              清空序列
+            </button>
+          </div>
+          {solverNotes.length > 0 ? (
+            <div className="callout">
+              <span className="callout-title">Solver 摘要</span>
+              <div className="detail-list">{solverNotes.map((note) => <span key={note}>{note}</span>)}</div>
+            </div>
+          ) : null}
+          {sequence.length === 0 ? (
             <div className="empty-state">
-              <strong>目前沒有可輸出的 macro。</strong>
-              <p>請先加入動作，或從上方貼入現成巨集。</p>
+              <strong>目前還沒有任何動作</strong>
+              <p>可以先從左側點技能加入，或直接讓 solver 幫你產生候選序列。</p>
             </div>
           ) : (
             <div className="history-list">
-              {macroChunks.map((chunk, index) => {
-                const value = chunk.join('\n')
-                const label = `macro-${index}`
+              {sequence.map((actionId, index) => {
+                const step = simulation.steps[index]
                 return (
-                  <article key={label} className="history-item">
+                  <article key={`${actionId}-${index}`} className="history-item">
                     <div className="history-item__top">
-                      <strong>Macro {index + 1}</strong>
-                      <span className="badge">{chunk.length} 行</span>
+                      <strong>#{index + 1} {localizedActionNames[actionId]}</strong>
+                      <span className={step?.isValid ? 'badge badge--positive' : 'badge badge--warning'}>
+                        {step?.isValid ? step.condition.toUpperCase() : '無效'}
+                      </span>
                     </div>
-                    <pre className="muted" style={{ whiteSpace: 'pre-wrap' }}><code>{value}</code></pre>
+                    <p className="muted">{craftActionDefinitions.find((entry) => entry.id === actionId)?.label}</p>
+                    {step ? (
+                      <p className="muted">
+                        進度 +{step.progressGain} / 品質 +{step.qualityGain} / 耐久變化 {step.durabilityChange} / CP 變化 {step.cpChange}
+                      </p>
+                    ) : null}
                     <div className="button-row">
-                      <button className="button button--primary" onClick={() => void handleCopy(label, value)} type="button">
-                        {copiedLabel === label ? '已複製' : '複製這段 macro'}
+                      <button
+                        className="button button--ghost"
+                        disabled={index === 0}
+                        onClick={() =>
+                          setSequence((current) => {
+                            const next = [...current]
+                            ;[next[index - 1], next[index]] = [next[index], next[index - 1]]
+                            return next
+                          })
+                        }
+                        type="button"
+                      >
+                        上移
+                      </button>
+                      <button
+                        className="button button--ghost"
+                        disabled={index === sequence.length - 1}
+                        onClick={() =>
+                          setSequence((current) => {
+                            const next = [...current]
+                            ;[next[index], next[index + 1]] = [next[index + 1], next[index]]
+                            return next
+                          })
+                        }
+                        type="button"
+                      >
+                        下移
+                      </button>
+                      <button className="button button--ghost" onClick={() => setSequence((current) => current.filter((_, currentIndex) => currentIndex !== index))} type="button">
+                        刪除
                       </button>
                     </div>
                   </article>
@@ -792,10 +715,86 @@ function CraftPage() {
         </article>
       </section>
 
+      <section className="source-grid">
+        <article className="page-card">
+          <div className="section-heading">
+            <h2>步驟 3：看結果與輸出 Macro</h2>
+            <p>當前序列會即時模擬。你可以匯入既有 macro，也可以直接複製站內產出的 macro 分段。</p>
+          </div>
+          <div className="stats-grid">
+            <article className="stat-card"><div className="stat-label">狀態</div><div className="stat-value">{formatStatus(simulation.finalState.status)}</div></article>
+            <article className="stat-card"><div className="stat-label">進度</div><div className="stat-value">{simulation.completionPercent}%</div></article>
+            <article className="stat-card"><div className="stat-label">品質</div><div className="stat-value">{simulation.qualityPercent}%</div></article>
+            <article className="stat-card"><div className="stat-label">HQ 估算</div><div className="stat-value">{simulation.hqPercent}%</div></article>
+            <article className="stat-card"><div className="stat-label">剩餘耐久</div><div className="stat-value">{simulation.finalState.durability}</div></article>
+            <article className="stat-card"><div className="stat-label">剩餘 CP</div><div className="stat-value">{simulation.finalState.cp}</div></article>
+            <article className="stat-card"><div className="stat-label">條件模式</div><div className="stat-value">{formatConditionMode(conditionMode)}</div></article>
+          </div>
+          <label className="field">
+            <span className="field-label">匯入 Macro</span>
+            <textarea className="input-text" onChange={(event) => setImportText(event.target.value)} rows={6} value={importText} />
+          </label>
+          <div className="button-row">
+            <button className="button button--ghost" onClick={handleImportMacro} type="button">從文字匯入 Macro</button>
+            <button className="button button--ghost" onClick={() => setImportText('')} type="button">清空匯入區</button>
+          </div>
+          <div className="history-list">
+            {macroChunks.map((chunk, index) => {
+              const value = chunk.join('\n')
+              const label = `macro-${index}`
+              return (
+                <article key={label} className="history-item">
+                  <div className="history-item__top">
+                    <strong>Macro {index + 1}</strong>
+                    <span className="badge">{chunk.length} 行</span>
+                  </div>
+                  <pre className="muted" style={{ whiteSpace: 'pre-wrap' }}><code>{value}</code></pre>
+                  <div className="button-row">
+                    <button className="button button--primary" onClick={() => void handleCopy(label, value)} type="button">
+                      {copiedLabel === label ? '已複製' : '複製這段 Macro'}
+                    </button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </article>
+
+        <article className="page-card">
+          <div className="section-heading">
+            <h2>相關任務清單</h2>
+            <p>如果你正在排老主顧或友好部落，也可以在這裡快速切換到對應追蹤內容。</p>
+          </div>
+          <div className="choice-row">
+            <button className={taskFilter === 'all' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('all')} type="button">全部相關</button>
+            <button className={taskFilter === 'custom' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('custom')} type="button">老主顧</button>
+            <button className={taskFilter === 'tribe-craft' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('tribe-craft')} type="button">友好部落 / 製作</button>
+            <button className={taskFilter === 'tribe-gather' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('tribe-gather')} type="button">友好部落 / 採集</button>
+          </div>
+          <div className="history-list">
+            {relevantTasks.slice(0, 8).map((entry) => (
+              <article key={entry.id} className="history-item">
+                <div className="history-item__top">
+                  <strong>{entry.name}</strong>
+                  <span className="badge">{entry.category === 'custom-deliveries' ? '老主顧' : '友好部落'}</span>
+                </div>
+                <p className="muted">
+                  {entry.location} | Patch {entry.patch} | {entry.supportRoles.map((role) => formatSupportRole(role)).join(' / ')}
+                </p>
+                <div className="button-row">
+                  <Link className="button button--ghost" to="/collection">前往收藏追蹤</Link>
+                  {entry.sourceUrl ? <a className="button button--ghost" href={entry.sourceUrl} rel="noreferrer" target="_blank">查看來源</a> : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        </article>
+      </section>
+
       {message ? (
         <section className="page-card">
           <div className="callout">
-            <span className="callout-title">訊息</span>
+            <span className="callout-title">狀態訊息</span>
             <span className="callout-body">{message}</span>
           </div>
         </section>

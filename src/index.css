@@ -435,6 +435,23 @@ button {
   gap: 0.8rem;
 }
 
+.sequence-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.sequence-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
+  font-size: 0.92rem;
+}
+
 .source-list,
 .schedule-list {
   display: grid;
