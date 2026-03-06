@@ -243,3 +243,29 @@ export interface TreasureAetheryte {
   x: number
   y: number
 }
+
+export type CollectionCategoryId = 'custom-deliveries' | 'allied-societies'
+export type CollectionSupportRole = 'crafting' | 'gathering' | 'fishing' | 'combat'
+export type CollectionExpansionId = 'arr' | 'hw' | 'sb' | 'shb' | 'ew' | 'dt'
+export type CollectionStatus = 'planned' | 'active' | 'completed'
+
+export interface CollectionEntry {
+  id: string
+  name: string
+  category: CollectionCategoryId
+  expansion: CollectionExpansionId
+  patch: string
+  supportRoles: CollectionSupportRole[]
+  location: string
+  unlockQuest: string
+  unlockSummary: string
+  rewardSummary: string[]
+  notes?: string
+  sourceUrl?: string
+}
+
+export interface CollectionTrackerState {
+  statuses: Record<string, CollectionStatus>
+  wishlist: string[]
+  importedAt: string | null
+}

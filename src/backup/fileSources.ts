@@ -54,7 +54,7 @@ export async function pickDirectoryWithNativePicker(): Promise<{
   const pickerWindow = window as DirectoryPickerWindow
 
   if (!pickerWindow.showDirectoryPicker) {
-    throw new Error('目前瀏覽器不支援原生資料夾選取，請改用回退模式。')
+    throw new Error('目前瀏覽器不支援原生資料夾選取，請改用目錄上傳模式。')
   }
 
   const directoryHandle = await pickerWindow.showDirectoryPicker()

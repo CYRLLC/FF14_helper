@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { createBackupArtifact, triggerArtifactDownload } from '../backup/archive'
-import {
-  canUseDirectoryPicker,
-  parseDirectoryInput,
-  pickDirectoryWithNativePicker,
-} from '../backup/fileSources'
+import { canUseDirectoryPicker, parseDirectoryInput, pickDirectoryWithNativePicker } from '../backup/fileSources'
 import { scanSelectedEntries } from '../backup/scan'
 import { createGoogleDriveAdapter } from '../cloud/gdrive'
 import { createOneDriveAdapter } from '../cloud/onedrive'
@@ -68,7 +64,7 @@ function BackupPage({ config }: BackupPageProps) {
     loader: () => Promise<{ rootName: string; entries: LocalFileEntry[] }>,
     method: 'native' | 'fallback',
   ): Promise<void> {
-    setBusyMessage('正在掃描你選擇的 FF14 設定資料夾...')
+    setBusyMessage('正在掃描 FF14 設定資料夾並建立備份。')
     setErrorMessage(null)
     setDownloadedAt(null)
     setUploadResult(null)
@@ -139,15 +135,14 @@ function BackupPage({ config }: BackupPageProps) {
       return
     }
 
-    const adapter =
-      provider === 'onedrive' ? createOneDriveAdapter(config) : createGoogleDriveAdapter(config)
+    const adapter = provider === 'onedrive' ? createOneDriveAdapter(config) : createGoogleDriveAdapter(config)
 
-    setBusyMessage(`正在連線至 ${providerLabel(provider)}...`)
+    setBusyMessage(`正在登入 ${providerLabel(provider)}。`)
     setErrorMessage(null)
 
     try {
       await adapter.signIn()
-      setBusyMessage(`正在上傳備份到 ${providerLabel(provider)}...`)
+      setBusyMessage(`正在上傳備份到 ${providerLabel(provider)}。`)
       const result = await adapter.upload(artifact)
       setUploadResult(result)
       setDownloadedAt(null)
@@ -201,9 +196,10 @@ function BackupPage({ config }: BackupPageProps) {
         </div>
 
         <div className="path-panel">
-          <p className="callout-title">使用方式</p>
+          <p className="callout-title">使用說明</p>
           <p className="callout-body">
-            請選擇 FF14 設定資料夾。本站會只整理必要的設定檔與角色資料夾，避免把無關檔案一起打包。
+            請直接選取 FF14 設定資料夾本身，不要選到外層的 Documents。本站會依 allowlist 篩選可備份檔案，
+            避免把不相干的資料一起打包。
           </p>
         </div>
 
@@ -212,14 +208,10 @@ function BackupPage({ config }: BackupPageProps) {
             <strong>預設同步目標：</strong> {targetLabel(syncState.preferences.preferredTarget)}
           </div>
           <div>
-            <strong>雲端前先下載：</strong>{' '}
-            {syncState.preferences.downloadBeforeCloudUpload ? '是' : '否'}
+            <strong>雲端前先下載：</strong> {syncState.preferences.downloadBeforeCloudUpload ? '是' : '否'}
           </div>
           <div>
-            <strong>目前可用方式：</strong>{' '}
-            {nativePickerSupported
-              ? '可使用瀏覽器原生資料夾選取'
-              : '目前瀏覽器不支援原生資料夾選取，請改用回退方式'}
+            <strong>目前可用模式：</strong> {nativePickerSupported ? '原生資料夾選取與目錄上傳都可用' : '使用目錄上傳回退方案'}
           </div>
         </div>
 
@@ -232,7 +224,7 @@ function BackupPage({ config }: BackupPageProps) {
             }}
             type="button"
           >
-            使用原生資料夾選取
+            選取資料夾
           </button>
           <button
             className="button button--ghost"
@@ -240,7 +232,7 @@ function BackupPage({ config }: BackupPageProps) {
             onClick={() => fallbackInputRef.current?.click()}
             type="button"
           >
-            使用回退方式選取
+            使用目錄上傳
           </button>
         </div>
 
@@ -257,58 +249,50 @@ function BackupPage({ config }: BackupPageProps) {
 
       {(busyMessage || errorMessage || downloadedAt || uploadResult) && (
         <section className="page-grid">
-          {busyMessage && (
+          {busyMessage ? (
             <div className="callout">
-              <span className="callout-title">處理中</span>
+              <span className="callout-title">進行中</span>
               <span className="callout-body">{busyMessage}</span>
             </div>
-          )}
-          {errorMessage && (
+          ) : null}
+          {errorMessage ? (
             <div className="callout callout--error">
-              <span className="callout-title">錯誤</span>
+              <span className="callout-title">備份失敗</span>
               <span className="callout-body">{errorMessage}</span>
             </div>
-          )}
-          {downloadedAt && artifact && (
+          ) : null}
+          {downloadedAt && artifact ? (
             <div className="callout callout--success">
               <span className="callout-title">下載完成</span>
               <span className="callout-body">
-                {artifact.fileName} 已於 {formatDateTimeLabel(downloadedAt)} 下載。
+                {artifact.fileName} 已於 {formatDateTimeLabel(downloadedAt)} 下載到本機。
               </span>
             </div>
-          )}
-          {uploadResult && (
+          ) : null}
+          {uploadResult ? (
             <div className="callout callout--success">
               <span className="callout-title">上傳完成</span>
               <span className="callout-body">
                 {uploadResult.remoteFileName} 已上傳到 {uploadResult.remotePathLabel}。
               </span>
             </div>
-          )}
+          ) : null}
         </section>
       )}
 
       <section className="stats-grid">
         <article className="stat-card">
           <div className="stat-label">OneDrive</div>
-          <div className="stat-value">
-            {config.oneDriveClientId ? '已設定 Client ID' : '尚未設定 Client ID'}
-          </div>
+          <div className="stat-value">{config.oneDriveClientId ? '已設定 Client ID' : '未設定 Client ID'}</div>
         </article>
         <article className="stat-card">
           <div className="stat-label">Google Drive</div>
-          <div className="stat-value">
-            {config.googleClientId ? '已設定 Client ID' : '尚未設定 Client ID'}
-          </div>
+          <div className="stat-value">{config.googleClientId ? '已設定 Client ID' : '未設定 Client ID'}</div>
         </article>
         <article className="stat-card">
-          <div className="stat-label">資料來源</div>
+          <div className="stat-label">選取方式</div>
           <div className="stat-value">
-            {sourceMethod === 'native'
-              ? '原生資料夾選取'
-              : sourceMethod === 'fallback'
-                ? '回退方式'
-                : '尚未選取'}
+            {sourceMethod === 'native' ? '原生資料夾選取' : sourceMethod === 'fallback' ? '目錄上傳' : '尚未選取'}
           </div>
         </article>
       </section>
@@ -316,13 +300,13 @@ function BackupPage({ config }: BackupPageProps) {
       <section className="page-card">
         <div className="section-heading">
           <h2>備份摘要</h2>
-          <p>選好資料夾後，本站會先建立 ZIP，你可以選擇快速同步、只下載或上傳到自己的雲端。</p>
+          <p>選取資料夾後，本站會先在瀏覽器內建立 ZIP，再提供下載或上傳到你的雲端空間。</p>
         </div>
 
         {!selection || !artifact ? (
           <div className="empty-state">
             <strong>尚未建立備份</strong>
-            <p>請先選擇 FF14 設定資料夾，系統就會掃描可備份內容並建立 ZIP。</p>
+            <p>請先選取 FF14 設定資料夾。</p>
           </div>
         ) : (
           <div className="page-grid">
@@ -347,10 +331,10 @@ function BackupPage({ config }: BackupPageProps) {
 
             <div className="badge-row">
               <span className={selection.summary.hasMainConfig ? 'badge badge--positive' : 'badge'}>
-                FFXIV.cfg {selection.summary.hasMainConfig ? '已包含' : '未包含'}
+                FFXIV.cfg {selection.summary.hasMainConfig ? '存在' : '缺少'}
               </span>
               <span className={selection.summary.hasBootConfig ? 'badge badge--positive' : 'badge'}>
-                FFXIV_BOOT.cfg {selection.summary.hasBootConfig ? '已包含' : '未包含'}
+                FFXIV_BOOT.cfg {selection.summary.hasBootConfig ? '存在' : '缺少'}
               </span>
             </div>
 
@@ -365,12 +349,7 @@ function BackupPage({ config }: BackupPageProps) {
               >
                 快速同步到 {targetLabel(syncState.preferences.preferredTarget)}
               </button>
-              <button
-                className="button button--ghost"
-                disabled={Boolean(busyMessage)}
-                onClick={handleDownload}
-                type="button"
-              >
+              <button className="button button--ghost" disabled={Boolean(busyMessage)} onClick={handleDownload} type="button">
                 下載 ZIP
               </button>
               <button
@@ -396,7 +375,7 @@ function BackupPage({ config }: BackupPageProps) {
             </div>
 
             <div className="list-panel">
-              <p className="callout-title">將納入備份的內容</p>
+              <p className="callout-title">納入備份的路徑</p>
               <ul>
                 {selection.summary.includedPaths.map((path) => (
                   <li key={path}>
@@ -407,15 +386,14 @@ function BackupPage({ config }: BackupPageProps) {
             </div>
 
             <div className="list-panel">
-              <p className="callout-title">最近同步摘要</p>
+              <p className="callout-title">最近同步紀錄</p>
               {syncState.history.length === 0 ? (
-                <p className="muted">目前還沒有同步紀錄。</p>
+                <p className="muted">目前沒有同步歷史。</p>
               ) : (
                 <ul>
                   {syncState.history.slice(0, 3).map((entry) => (
                     <li key={entry.id}>
-                      {formatDateTimeLabel(entry.createdAt)} | {targetLabel(entry.target)} |{' '}
-                      {entry.fileName}
+                      {formatDateTimeLabel(entry.createdAt)} | {targetLabel(entry.target)} | {entry.fileName}
                     </li>
                   ))}
                 </ul>

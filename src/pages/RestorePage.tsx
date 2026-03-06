@@ -36,39 +36,39 @@ function RestorePage() {
       <section className="page-card">
         <div className="section-heading">
           <h2>還原檢查</h2>
-          <p>載入備份 ZIP 後先檢查內容與 manifest。這一頁只讀不寫，所有處理都留在瀏覽器內。</p>
+          <p>上傳你先前建立的備份 ZIP，檢查內容、manifest 與基本結構是否完整。</p>
         </div>
 
         <label className="field">
-          <span className="field-label">選擇備份 ZIP</span>
+          <span className="field-label">選取備份 ZIP</span>
           <input accept=".zip,application/zip" onChange={(event) => void handleFileChange(event)} type="file" />
         </label>
 
-        {busy && (
+        {busy ? (
           <div className="callout">
-            <span className="callout-title">處理中</span>
-            <span className="callout-body">正在檢查備份檔內容...</span>
+            <span className="callout-title">檢查中</span>
+            <span className="callout-body">正在分析備份檔內容。</span>
           </div>
-        )}
+        ) : null}
 
-        {errorMessage && (
+        {errorMessage ? (
           <div className="callout callout--error">
-            <span className="callout-title">錯誤</span>
+            <span className="callout-title">解析失敗</span>
             <span className="callout-body">{errorMessage}</span>
           </div>
-        )}
+        ) : null}
       </section>
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>封存摘要</h2>
-          <p>可先確認這份備份實際包含哪些檔案，降低還原時的意外。</p>
+          <h2>檢查結果</h2>
+          <p>這裡只做結構檢查，不會直接把內容寫回你的 FF14 設定資料夾。</p>
         </div>
 
         {!inspection ? (
           <div className="empty-state">
-            <strong>尚未載入備份檔</strong>
-            <p>請選擇由本站備份流程產生的 ZIP 來檢查。</p>
+            <strong>尚未選取備份檔</strong>
+            <p>請先上傳一個由本站建立或相容格式的 FF14 備份 ZIP。</p>
           </div>
         ) : (
           <div className="page-grid">
@@ -82,21 +82,20 @@ function RestorePage() {
                 <div className="stat-value">{formatBytes(inspection.size)}</div>
               </article>
               <article className="stat-card">
-                <div className="stat-label">項目數量</div>
+                <div className="stat-label">Entries</div>
                 <div className="stat-value">{inspection.entries.length}</div>
               </article>
               <article className="stat-card">
                 <div className="stat-label">Manifest</div>
-                <div className="stat-value">{inspection.manifest ? '已偵測' : '缺少'}</div>
+                <div className="stat-value">{inspection.manifest ? '存在' : '缺少'}</div>
               </article>
             </div>
 
             {inspection.manifest ? (
               <div className="list-panel">
-                <p className="callout-title">Manifest 內容</p>
+                <p className="callout-title">Manifest 摘要</p>
                 <p className="muted">
-                  建立時間：{formatDateTimeLabel(inspection.manifest.createdAt)} | 來源資料夾：
-                  {inspection.manifest.sourceRootName}
+                  建立時間：{formatDateTimeLabel(inspection.manifest.createdAt)} | 來源資料夾：{inspection.manifest.sourceRootName}
                 </p>
                 <p className="muted">
                   角色資料夾：{inspection.manifest.characterCount} | 版本：{inspection.manifest.version}
@@ -104,15 +103,15 @@ function RestorePage() {
               </div>
             ) : (
               <div className="callout callout--error">
-                <span className="callout-title">缺少 Manifest</span>
+                <span className="callout-title">缺少 manifest</span>
                 <span className="callout-body">
-                  這份 ZIP 仍可打開，但沒有有效的 `backup-manifest.json`，請自行確認來源。
+                  這個 ZIP 沒有偵測到 `backup-manifest.json`。若不是本站建立的備份檔，請自行確認內容來源。
                 </span>
               </div>
             )}
 
             <div className="list-panel">
-              <p className="callout-title">封存內容清單</p>
+              <p className="callout-title">檔案列表</p>
               <ul>
                 {inspection.entries.map((entry) => (
                   <li key={entry}>

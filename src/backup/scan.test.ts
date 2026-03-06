@@ -36,6 +36,6 @@ describe('scanSelectedEntries', () => {
   it('rejects a directory that does not look like FF14 settings', () => {
     expect(() =>
       summarizeBackupSource('Documents', [createEntry('screenshots/photo.png'), createEntry('todo.txt')]),
-    ).toThrow('選取的資料夾內找不到 FF14 個人設定檔')
+    ).toThrow('選取的資料夾看起來不像 FF14 設定資料夾')
   })
 })

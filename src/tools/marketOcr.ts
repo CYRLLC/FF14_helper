@@ -31,7 +31,7 @@ export function extractRowsFromOcrText(rawText: string): MarketOcrParsedRow[] {
     .split(/\r?\n/gu)
     .map(normalizeOcrLine)
     .map((line) => {
-      const priceMatch = line.match(/(\d[\d,.，]*)$/u)
+      const priceMatch = line.match(/(\d[\d,.]*)$/u)
 
       if (!priceMatch) {
         return null
@@ -113,7 +113,7 @@ export function applyOcrRowsToWorkbook(options: {
             chocoboPrice: options.targetServer === 'chocobo' ? parsedRow.price : 0,
             mooglePrice: options.targetServer === 'moogle' ? parsedRow.price : 0,
             quantity: parsedRow.quantity,
-            note: '由截圖 OCR 匯入',
+            note: '由 OCR 匯入',
           }
 
     if (targetIndex >= 0) {

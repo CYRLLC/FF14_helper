@@ -24,10 +24,7 @@ function shouldIncludePath(relativePath: string): boolean {
   return segments.length === 1 && ROOT_CONFIG_PATTERN.test(topLevel)
 }
 
-export function summarizeBackupSource(
-  rootName: string,
-  entries: LocalFileEntry[],
-): BackupSourceSummary {
+export function summarizeBackupSource(rootName: string, entries: LocalFileEntry[]): BackupSourceSummary {
   const normalizedEntries = entries.map((entry) => ({
     ...entry,
     relativePath: normalizeRelativePath(entry.relativePath),
@@ -58,16 +55,13 @@ export function summarizeBackupSource(
   }
 
   if (!summary.hasBootConfig && !summary.hasMainConfig && summary.characterDirs.length === 0) {
-    throw new Error('選取的資料夾內找不到 FF14 個人設定檔，請確認你選的是遊戲設定資料夾。')
+    throw new Error('選取的資料夾看起來不像 FF14 設定資料夾，請確認是否選到 `FINAL FANTASY XIV - A Realm Reborn`。')
   }
 
   return summary
 }
 
-export function scanSelectedEntries(
-  rootName: string,
-  entries: LocalFileEntry[],
-): BackupSourceSelection {
+export function scanSelectedEntries(rootName: string, entries: LocalFileEntry[]): BackupSourceSelection {
   const normalizedEntries = entries.map((entry) => ({
     ...entry,
     relativePath: normalizeRelativePath(entry.relativePath),
@@ -75,9 +69,7 @@ export function scanSelectedEntries(
 
   const summary = summarizeBackupSource(rootName, normalizedEntries)
   const includedPathSet = new Set(summary.includedPaths)
-  const filteredEntries = normalizedEntries.filter((entry) =>
-    includedPathSet.has(entry.relativePath),
-  )
+  const filteredEntries = normalizedEntries.filter((entry) => includedPathSet.has(entry.relativePath))
 
   return {
     rootName,

@@ -13,7 +13,7 @@ function targetLabel(target: SyncTarget): string {
 }
 
 function eventLabel(eventType: 'downloaded' | 'uploaded'): string {
-  return eventType === 'downloaded' ? '已下載' : '已上傳'
+  return eventType === 'downloaded' ? '下載' : '上傳'
 }
 
 function SyncPage() {
@@ -30,7 +30,7 @@ function SyncPage() {
     anchor.download = 'ff14-helper-sync-profile.json'
     anchor.click()
     URL.revokeObjectURL(url)
-    setMessage('已匯出目前的同步偏好與最近紀錄。')
+    setMessage('已匯出同步設定檔。')
     setErrorMessage(null)
   }
 
@@ -43,7 +43,7 @@ function SyncPage() {
 
     try {
       importProfile(await file.text())
-      setMessage('已成功把同步偏好匯入到這個瀏覽器。')
+      setMessage('已匯入同步設定。')
       setErrorMessage(null)
     } catch (error: unknown) {
       setErrorMessage(getErrorMessage(error))
@@ -57,8 +57,8 @@ function SyncPage() {
     <div className="page-grid">
       <section className="page-card">
         <div className="section-heading">
-          <h2>同步中心</h2>
-          <p>同步偏好與最近紀錄只存在瀏覽器本機。真正的備份檔只會到你的裝置或你自己的雲端。</p>
+          <h2>同步設定</h2>
+          <p>這些偏好只會保存在目前瀏覽器，用來決定備份頁的預設同步目標與歷史紀錄保留方式。</p>
         </div>
 
         <div className="field-grid">
@@ -80,7 +80,7 @@ function SyncPage() {
           </label>
 
           <label className="field">
-            <span className="field-label">保留最近紀錄數量</span>
+            <span className="field-label">歷史紀錄上限</span>
             <select
               className="input-select"
               onChange={(event) => {
@@ -108,7 +108,7 @@ function SyncPage() {
             }}
             type="checkbox"
           />
-          <span>開始任何雲端上傳前，先保留一份本機 ZIP</span>
+          <span>上傳雲端前先保留一份本機 ZIP</span>
         </label>
 
         <label className="checkbox-row">
@@ -121,63 +121,59 @@ function SyncPage() {
             }}
             type="checkbox"
           />
-          <span>在瀏覽器中保留最近同步紀錄</span>
+          <span>保存同步歷史紀錄</span>
         </label>
 
         <div className="button-row">
           <button className="button button--primary" onClick={handleExport} type="button">
-            匯出同步設定
+            匯出設定
           </button>
-          <button
-            className="button button--ghost"
-            onClick={() => fileInputRef.current?.click()}
-            type="button"
-          >
-            匯入同步設定
+          <button className="button button--ghost" onClick={() => fileInputRef.current?.click()} type="button">
+            匯入設定
           </button>
           <button className="button button--ghost" onClick={clearHistory} type="button">
-            清除最近紀錄
+            清空歷史
           </button>
         </div>
 
         <input
           ref={fileInputRef}
-          className="sr-only"
           accept="application/json"
+          className="sr-only"
           onChange={(event) => {
             void handleImport(event)
           }}
           type="file"
         />
 
-        {message && (
+        {message ? (
           <div className="callout callout--success">
-            <span className="callout-title">狀態</span>
+            <span className="callout-title">完成</span>
             <span className="callout-body">{message}</span>
           </div>
-        )}
+        ) : null}
 
-        {errorMessage && (
+        {errorMessage ? (
           <div className="callout callout--error">
-            <span className="callout-title">錯誤</span>
+            <span className="callout-title">設定錯誤</span>
             <span className="callout-body">{errorMessage}</span>
           </div>
-        )}
+        ) : null}
       </section>
 
       <section className="page-card">
         <div className="section-heading">
           <h2>最近同步紀錄</h2>
           <p>
-            這裡只顯示存在瀏覽器本機的摘要。
-            {syncState.importedAt ? ` 最近一次匯入：${formatDateTimeLabel(syncState.importedAt)}` : ''}
+            這些紀錄只保存在目前瀏覽器。
+            {syncState.importedAt ? ` 最近一次匯入時間：${formatDateTimeLabel(syncState.importedAt)}` : ''}
           </p>
         </div>
 
         {syncState.history.length === 0 ? (
           <div className="empty-state">
-            <strong>目前還沒有同步紀錄</strong>
-            <p>從備份頁執行下載或上傳後，摘要就會顯示在這裡。</p>
+            <strong>目前沒有歷史紀錄</strong>
+            <p>當你在備份頁完成下載或上傳後，這裡會顯示最近幾次操作摘要。</p>
           </div>
         ) : (
           <div className="history-list">
@@ -188,13 +184,12 @@ function SyncPage() {
                   <span className="badge">{eventLabel(entry.eventType)}</span>
                 </div>
                 <p className="muted">
-                  {formatDateTimeLabel(entry.createdAt)} | {targetLabel(entry.target)} |{' '}
-                  {formatBytes(entry.size)}
+                  {formatDateTimeLabel(entry.createdAt)} | {targetLabel(entry.target)} | {formatBytes(entry.size)}
                 </p>
                 <p className="muted">
                   來源資料夾：{entry.sourceRootName} | 角色資料夾：{entry.characterCount}
                 </p>
-                {entry.remotePathLabel && <p className="muted">遠端位置：{entry.remotePathLabel}</p>}
+                {entry.remotePathLabel ? <p className="muted">遠端位置：{entry.remotePathLabel}</p> : null}
               </article>
             ))}
           </div>

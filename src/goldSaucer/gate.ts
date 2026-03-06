@@ -4,12 +4,12 @@ export const GATE_MINUTES = [0, 20, 40] as const
 const GATE_DURATION_MS = 20 * 60 * 1000
 
 const GATE_EVENT_POOL = [
-  'Air Force One',
-  'Any Way the Wind Blows',
-  'Cliffhanger',
-  'Leap of Faith',
-  'The Slice Is Right',
-  'The Typhon Challenge',
+  '飛空艇大亂鬥',
+  '狂風吹拂',
+  '絕壁攀登',
+  '躍升天際',
+  '切分狂歡',
+  '泰風挑戰',
 ] as const
 
 function formatTaipeiLabel(date: Date): string {
@@ -26,11 +26,9 @@ function formatTaipeiLabel(date: Date): string {
 
 function hashSlotKey(slotKey: string): number {
   let hash = 0
-
   for (let index = 0; index < slotKey.length; index += 1) {
     hash = (hash * 31 + slotKey.charCodeAt(index)) % 100000
   }
-
   return hash
 }
 
@@ -38,7 +36,6 @@ function getSlotKey(date: Date): string {
   const slotStart = new Date(date)
   slotStart.setSeconds(0, 0)
   slotStart.setMinutes(Math.floor(slotStart.getMinutes() / 20) * 20)
-
   return slotStart.toISOString().slice(0, 16)
 }
 
@@ -47,10 +44,8 @@ function buildCandidateEvents(seed: number): string[] {
   const offset = seed % ordered.length
   const rotated = ordered.slice(offset).concat(ordered.slice(0, offset))
 
-  // Bias Leap of Faith slightly because players often care about it the most.
   if (seed % 3 === 0) {
-    const leapIndex = rotated.indexOf('Leap of Faith')
-
+    const leapIndex = rotated.indexOf('躍升天際')
     if (leapIndex > 0) {
       const [leap] = rotated.splice(leapIndex, 1)
       rotated.unshift(leap)
@@ -69,10 +64,10 @@ export function buildGatePrediction(date: Date): GatePrediction {
   return {
     slotKey,
     predictedEvent: candidateEvents[0],
-    confidenceLabel: confidenceScore >= 55 ? '偏高' : '普通',
+    confidenceLabel: confidenceScore >= 70 ? '高' : confidenceScore >= 48 ? '中' : '低',
     confidenceScore,
     candidateEvents,
-    note: '這是站內啟發式推估，只提供參考，不代表官方或實際當輪活動。',
+    note: '此預測依固定時段與簡化輪替規則推估，僅供參考，實際活動名稱仍以遊戲內為準。',
   }
 }
 
@@ -83,9 +78,7 @@ export function formatCountdown(ms: number): string {
   const seconds = totalSeconds % 60
 
   if (hours > 0) {
-    return `${hours}h ${minutes.toString().padStart(2, '0')}m ${seconds
-      .toString()
-      .padStart(2, '0')}s`
+    return `${hours}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`
   }
 
   return `${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`
@@ -94,12 +87,8 @@ export function formatCountdown(ms: number): string {
 export function getGateWindowAt(date: Date): GateWindow {
   const start = new Date(date)
   const minute = start.getMinutes()
-  const slotMinute = GATE_MINUTES.reduce((current, candidate) =>
-    candidate <= minute ? candidate : current,
-  )
-
+  const slotMinute = GATE_MINUTES.reduce((current, candidate) => (candidate <= minute ? candidate : current))
   start.setMinutes(slotMinute, 0, 0)
-
   const end = new Date(start.getTime() + GATE_DURATION_MS)
   const isActive = date.getTime() >= start.getTime() && date.getTime() < end.getTime()
 
@@ -116,9 +105,7 @@ export function getNextGateStart(date: Date): Date {
   const next = new Date(date)
   next.setSeconds(0, 0)
 
-  const currentMinute = next.getMinutes()
-  const nextMinute = GATE_MINUTES.find((candidate) => candidate > currentMinute)
-
+  const nextMinute = GATE_MINUTES.find((candidate) => candidate > next.getMinutes())
   if (typeof nextMinute === 'number') {
     next.setMinutes(nextMinute)
     return next

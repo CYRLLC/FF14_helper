@@ -1,87 +1,125 @@
 # FF14 Helper
 
-FF14 Helper 是一個公開的、以瀏覽器為核心的 Final Fantasy XIV 工具站。
+FF14 Helper is a public GitHub Pages project focused on practical Final Fantasy XIV helper tools.
 
-本站以 GitHub Pages 靜態網站形式部署，盡量把備份、還原檢查、同步偏好、金碟時程、繁中服查價與藏寶圖輔助都放在前端完成，不依賴本站自建後端來保存使用者內容。
+This project is intentionally front-end first:
+- Personal setting backups are created in the browser.
+- Treasure map planning and most workspace data stay in local storage unless the user explicitly enables short-lived realtime rooms.
+- Cloud uploads go directly to OneDrive or Google Drive.
+- No FF14 Helper application server is used for normal file handling.
 
-## 目前狀態
+## Work In Progress
 
-此專案持續開發中。
+This repository is still under active development.
+Core pages are already usable, but copy, workflow details, solver quality, and UI polish will continue to evolve.
 
-- 備份與還原檢查已可使用
-- 金碟、雙服比價、完整藏寶圖已上線
-- 後續仍會持續擴充更多 FF14 輔助功能
+## Current Feature Set
 
-## 目前功能
+### Backup Assistant
 
-- 在瀏覽器中整理 FF14 個人設定資料並打包 ZIP
-- 可選擇上傳到自己的 OneDrive 或 Google Drive
-- 還原前可先檢查 ZIP 與 `backup-manifest.json`
-- 同步偏好與最近紀錄只存在本機瀏覽器
-- 金碟 GATE 時段參考表（台灣時間）
-- 僅供參考的 GATE 活動預測
-- 繁中服 `陸行鳥 / 莫古力` 多項目比價工作表
-- 市場板試算工具
-- 參考 `xiv-tc-treasure-finder` 的完整藏寶圖頁
-- 單人與 8 人寶圖分開整理
-- 8 人寶圖本機組隊規劃與路線整理
-- 外部工具導覽與來源標示
+- Select the FF14 settings folder from Windows.
+- Scan only known configuration files and character folders.
+- Build a ZIP archive in the browser.
+- Download locally or upload to OneDrive / Google Drive.
 
-## 資料政策
+### Restore Inspector
 
-本站不經營自己的使用者資料後端。
+- Open an existing backup ZIP.
+- Validate `backup-manifest.json`.
+- Review archive entries before manual restoration.
 
-- 備份 ZIP 在瀏覽器中建立
-- 同步偏好、查價工作表、藏寶圖選擇與組隊清單會存在瀏覽器 `localStorage`
-- 本站不會把你的個人設定檔、查價內容或藏寶圖規劃上傳到本站伺服器
-- 只有在你明確選擇雲端上傳時，備份檔才會送到你自己的 OneDrive 或 Google Drive
+### Traditional Chinese Market Workbench
 
-## 參考來源
+- Focused on `陸行鳥` and `莫古力`.
+- OCR import from screenshots with editable preview before commit.
+- Bulk text import and manual row entry.
+- Workbook summary and marketboard calculator.
 
-本站會參考社群工具與公開文件的功能方向或資料格式，但不直接複製對方的版面、文案或素材。所有功能都會用本站自己的 UI 與程式碼重新實作。
+### Gold Saucer GATE Reference
 
-### 功能參考
+- Fixed `Asia/Taipei` time display.
+- Countdown for the current or next GATE window.
+- Non-official candidate prediction for reference only.
 
-- [FFXIV Market (beherw)](https://beherw.github.io/FFXIV_Market/)
-- [xiv-tc-toolbox (cycleapple)](https://cycleapple.github.io/xiv-tc-toolbox/)
-- [xiv-tc-treasure-finder (cycleapple)](https://cycleapple.github.io/xiv-tc-treasure-finder/)
-- [FFXIV Teamcraft](https://ffxivteamcraft.com/)
-- [Garland Tools](https://garlandtools.org/)
+### Craft Workbench
 
-### 資料來源與文件
+- In-site crafting workbench inspired by the BestCraft project.
+- Crafter attributes, recipe search/autofill, and editable skill sequence.
+- Progress / quality / durability / CP simulation in the browser.
+- Built-in solver with configurable objective and condition assumptions.
+- Macro text import and macro draft export.
+- Quick task filters for Custom Deliveries and Allied Societies.
+
+### Collection Tracker
+
+- In-site collection workflow inspired by `ffxiv-collection-tc`.
+- Focused first on Custom Deliveries and Allied Societies.
+- Search, patch filter, role filter, status tracking, and wishlist.
+- Backup code export / import stored only in the browser.
+
+### Treasure Map Helper
+
+- Separate solo and 8-player treasure flows.
+- Local snapshot data instead of runtime parsing of third-party scripts.
+- Map point browsing, coordinate copy, and route planning.
+- Optional realtime room sync through Firebase with TTL-based temporary storage.
+
+## Data Policy
+
+- This site does not store your FF14 configuration files on any FF14 Helper server.
+- Backup ZIP files are generated locally in your browser.
+- Cloud backup uploads go directly to OneDrive or Google Drive after you authorize those services.
+- Market workbench data is stored only in your browser `localStorage`.
+- Realtime treasure rooms, when enabled, store only room code, room name, member nicknames, route data, and timestamps in Firebase for a limited time.
+- The project does not create permanent user accounts.
+
+## Reference Sources
+
+These sites and documents are used as reference for workflow design, public data rules, or implementation research.
+FF14 Helper is a reimplementation, not a copy of any referenced site.
+
+### Feature Inspiration
+
+- [FFXIV Best Craft](https://github.com/Tnze/ffxiv-best-craft)
+- [ffxiv-collection-tc](https://cycleapple.github.io/ffxiv-collection-tc/)
+- [FFXIV Market](https://beherw.github.io/FFXIV_Market/)
+- [xiv-tc-treasure-finder](https://cycleapple.github.io/xiv-tc-treasure-finder/)
+- [xiv-tc-toolbox](https://cycleapple.github.io/xiv-tc-toolbox/)
+
+### Data and Technical Sources
 
 - [Console Games Wiki: Gold Saucer Active Time Events](https://ffxiv.consolegameswiki.com/wiki/Gold_Saucer_Active_Time_Events)
+- [Custom Deliveries - Console Games Wiki](https://ffxiv.consolegameswiki.com/wiki/Custom_Deliveries)
+- [Allied Society Quests - Console Games Wiki](https://ffxiv.consolegameswiki.com/wiki/Allied_Society_Quests)
+- [Soktai FFXIV Tools - Allied Society Quests](https://soktai.ca/ffxiv/allied-society-quests)
 - [cycleapple treasure data.js](https://cycleapple.github.io/xiv-tc-treasure-finder/js/data.js)
+- [cycleapple firebase-config.js](https://cycleapple.github.io/xiv-tc-treasure-finder/js/party/firebase-config.js)
 - [XIVAPI](https://xivapi.com/)
 - [XIVAPI Docs](https://v2.xivapi.com/docs)
-- [XIVAPI Search Guide](https://v2.xivapi.com/docs/guides/search/)
 - [XIVAPI MapCoordinates.md](https://github.com/xivapi/ffxiv-datamining/blob/master/docs/MapCoordinates.md)
-- [Universalis](https://universalis.app/)
+- [Tesseract.js](https://github.com/naptha/tesseract.js)
+- [BestCraft License (AGPL-3.0)](https://github.com/Tnze/ffxiv-best-craft/blob/master/LICENSE)
 
-## 專案目標
+## Reference vs Reimplementation
 
-- 維持可部署於 GitHub Pages 的純前端架構
-- 盡量避免在本站伺服器保存使用者資料
-- 把 FF14 常用小工具整合成一個實用網站
-- 保持公開專案可讀性，方便外部協作者理解
+Referenced sites are used for:
+- feature direction
+- workflow study
+- public data interpretation
 
-## 技術棧
+This project does not directly copy:
+- UI layouts
+- site copy
+- proprietary assets
 
-- React
-- TypeScript
-- Vite
-- React Router
-- Vitest
-- GitHub Pages
-
-## 本機開發
+## Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-常用指令：
+Validation:
 
 ```bash
 npm run build
@@ -89,34 +127,27 @@ npm run test
 npm run lint
 ```
 
-## 執行期設定
+## Runtime Config
 
-部署雲端上傳功能前，請先更新 [public/runtime-config.json](/d:/FF14_helper/public/runtime-config.json)：
+Set public runtime values in `public/runtime-config.json`.
 
 - `oneDriveClientId`
 - `googleClientId`
-- `oneDriveRedirectUri`（可選）
-- `googleRedirectUri`（可選）
+- `oneDriveRedirectUri`
+- `googleRedirectUri`
+- `firebaseApiKey`
+- `firebaseAuthDomain`
+- `firebaseDatabaseUrl`
+- `firebaseProjectId`
+- `firebaseStorageBucket`
+- `firebaseMessagingSenderId`
+- `firebaseAppId`
 
-若 `Client ID` 留空，網站仍可使用本機備份、還原檢查、金碟、查價與藏寶圖等功能，但雲端上傳會維持停用。
+These are public client-side configuration values, not server secrets.
 
-## GitHub Pages 部署
+## Deployment
 
-本專案已配置 GitHub Actions 部署到 GitHub Pages。
+The site is deployed through GitHub Actions to GitHub Pages.
 
-相關 workflow：
-
-- [.github/workflows/deploy.yml](/d:/FF14_helper/.github/workflows/deploy.yml)
-
-補充：
-
-- Vite 的 `base` 使用 `./`，因此適用於 repo pages、user pages 與 custom domain
-- 預期由 `main` 分支透過 workflow 部署
-
-## 公開專案說明
-
-此 repository 以公開協作為前提。
-
-- 盡量維持使用者可讀的繁體中文文案
-- 若功能參考了其他公開工具，需清楚標示來源
-- 除非真的必要，否則優先維持純前端與無後端的方向
+- Workflow file: `.github/workflows/deploy.yml`
+- Vite `base` is set to `./` so the build works for repo pages, user pages, and custom domains.

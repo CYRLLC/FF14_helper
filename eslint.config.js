@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores(['dist', 'FF14_bestCraft_ZH_TW']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

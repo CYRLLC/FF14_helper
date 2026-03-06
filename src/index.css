@@ -107,6 +107,12 @@ button {
   gap: 0.75rem;
 }
 
+.site-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
 .nav-link {
   border: 1px solid transparent;
   border-radius: 999px;
@@ -129,6 +135,11 @@ button {
   border-color: rgba(246, 189, 82, 0.4);
   background: rgba(246, 189, 82, 0.14);
   color: #fff7dc;
+}
+
+.nav-link--subtle {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.9rem;
 }
 
 .page-shell {
@@ -286,7 +297,8 @@ button {
 .path-panel,
 .list-panel,
 .stat-card,
-.config-card {
+.config-card,
+.modal-panel {
   display: grid;
   gap: 0.35rem;
   border: 1px solid var(--border);
@@ -527,6 +539,13 @@ button {
   align-items: start;
 }
 
+.route-planner-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(320px, 1.3fr) minmax(280px, 1fr);
+  align-items: start;
+}
+
 .treasure-board {
   position: relative;
   width: 100%;
@@ -614,6 +633,72 @@ button {
   border-color: rgba(246, 189, 82, 0.95);
   background: rgba(246, 189, 82, 0.28);
   box-shadow: 0 0 0 8px rgba(246, 189, 82, 0.14);
+}
+
+.map-viewer__marker--done {
+  border-color: rgba(99, 211, 177, 0.95);
+  background: rgba(99, 211, 177, 0.24);
+}
+
+.drop-zone {
+  display: grid;
+  gap: 0.45rem;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  border-radius: 1rem;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  outline: none;
+}
+
+.drop-zone--active,
+.drop-zone:focus {
+  border-color: rgba(246, 189, 82, 0.45);
+  background: rgba(246, 189, 82, 0.08);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.7rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table th {
+  color: var(--accent-strong);
+  font-size: 0.84rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.table-actions {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(4, 10, 18, 0.72);
+}
+
+.modal-panel {
+  width: min(560px, 100%);
+  background: rgba(14, 22, 31, 0.96);
 }
 
 .treasure-card-grid {
@@ -717,6 +802,10 @@ button {
   }
 
   .treasure-finder-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .route-planner-layout {
     grid-template-columns: 1fr;
   }
 

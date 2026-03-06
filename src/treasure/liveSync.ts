@@ -1,11 +1,5 @@
-import { initializeApp, getApp, getApps, type FirebaseApp } from 'firebase/app'
-import {
-  getAuth,
-  onAuthStateChanged,
-  signInAnonymously,
-  type Auth,
-  type User,
-} from 'firebase/auth'
+import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app'
+import { getAuth, onAuthStateChanged, signInAnonymously, type Auth, type User } from 'firebase/auth'
 import {
   get,
   getDatabase,
@@ -25,6 +19,7 @@ import type { TreasurePartyRouteItem } from './party'
 const ROOM_KEY_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 const ROOM_KEY_LENGTH = 8
 const MAX_MEMBERS = 8
+const ROOM_TTL_MS = 24 * 60 * 60 * 1000
 
 interface FirebaseContext {
   app: FirebaseApp
@@ -43,6 +38,8 @@ export interface RealtimeTreasureRoomState {
   roomName: string
   gradeId: string
   updatedAtLabel: string
+  expiresAtLabel: string
+  expiresInMs: number
   members: RealtimeTreasureMember[]
   route: TreasurePartyRouteItem[]
 }
@@ -89,19 +86,17 @@ function normalizeRoute(route: TreasurePartyRouteItem[]): TreasurePartyRouteItem
     }))
 }
 
-function toUpdatedAtLabel(value: unknown): string {
+function toDateTimeLabel(value: unknown): string {
   if (typeof value === 'number') {
-    return new Date(value).toLocaleString('zh-TW', {
-      hour12: false,
-    })
+    return new Date(value).toLocaleString('zh-TW', { hour12: false })
   }
 
-  return '等待第一筆更新'
+  return '尚未更新'
 }
 
 async function ensureFirebase(config: RuntimeConfig): Promise<FirebaseContext> {
   if (!hasFirebaseConfig(config)) {
-    throw new Error('尚未設定 Firebase，即時同步功能無法使用')
+    throw new Error('未設定 Firebase，無法啟用即時隊伍同步。')
   }
 
   if (firebaseContext) {
@@ -121,12 +116,7 @@ async function ensureFirebase(config: RuntimeConfig): Promise<FirebaseContext> {
           appId: config.firebaseAppId,
         })
 
-  firebaseContext = {
-    app,
-    auth: getAuth(app),
-    db: getDatabase(app),
-  }
-
+  firebaseContext = { app, auth: getAuth(app), db: getDatabase(app) }
   return firebaseContext
 }
 
@@ -137,14 +127,8 @@ async function ensureSignedIn(config: RuntimeConfig): Promise<{ auth: Auth; db: 
     await signInAnonymously(context.auth)
   }
 
-  const existingUser = context.auth.currentUser
-
-  if (existingUser) {
-    return {
-      auth: context.auth,
-      db: context.db,
-      user: existingUser,
-    }
+  if (context.auth.currentUser) {
+    return { auth: context.auth, db: context.db, user: context.auth.currentUser }
   }
 
   const user = await new Promise<User>((resolve, reject) => {
@@ -163,11 +147,7 @@ async function ensureSignedIn(config: RuntimeConfig): Promise<{ auth: Auth; db: 
     )
   })
 
-  return {
-    auth: context.auth,
-    db: context.db,
-    user,
-  }
+  return { auth: context.auth, db: context.db, user }
 }
 
 async function roomExists(db: Database, roomCode: string): Promise<boolean> {
@@ -178,13 +158,24 @@ async function roomExists(db: Database, roomCode: string): Promise<boolean> {
 async function createUniqueRoomCode(db: Database): Promise<string> {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const roomCode = createRoomCode()
-
     if (!(await roomExists(db, roomCode))) {
       return roomCode
     }
   }
 
-  throw new Error('暫時無法產生新的房號，請稍後再試')
+  throw new Error('無法建立新的房間代碼，請稍後再試。')
+}
+
+async function removeIfExpired(db: Database, roomCode: string): Promise<boolean> {
+  const snapshot = await get(ref(db, `treasureRooms/${roomCode}/meta/expiresAt`))
+  const expiresAt = snapshot.val()
+
+  if (typeof expiresAt === 'number' && expiresAt <= Date.now()) {
+    await remove(ref(db, `treasureRooms/${roomCode}`))
+    return true
+  }
+
+  return false
 }
 
 export function isRealtimeTreasureAvailable(config: RuntimeConfig): boolean {
@@ -205,10 +196,11 @@ export async function createRealtimeTreasureRoom(options: {
 
   await set(roomRef, {
     meta: {
-      roomName: options.roomName.trim() || '寶圖隊伍',
+      roomName: options.roomName.trim() || 'FF14 藏寶圖隊伍',
       gradeId: options.gradeId,
       createdAt: serverTimestamp(),
       updatedAt: Date.now(),
+      expiresAt: Date.now() + ROOM_TTL_MS,
       createdBy: user.uid,
     },
     members: {
@@ -223,10 +215,7 @@ export async function createRealtimeTreasureRoom(options: {
 
   await onDisconnect(memberRef).remove()
 
-  return {
-    roomCode,
-    currentUserId: user.uid,
-  }
+  return { roomCode, currentUserId: user.uid }
 }
 
 export async function joinRealtimeTreasureRoom(options: {
@@ -237,52 +226,46 @@ export async function joinRealtimeTreasureRoom(options: {
   const normalizedRoomCode = options.roomCode.trim().toUpperCase()
 
   if (!/^[A-Z2-9]{8}$/u.test(normalizedRoomCode)) {
-    throw new Error('房號格式不正確，請輸入 8 碼英數代碼')
+    throw new Error('房間代碼格式錯誤，請輸入 8 碼英數字。')
   }
 
   const { db, user } = await ensureSignedIn(options.config)
+
+  if (await removeIfExpired(db, normalizedRoomCode)) {
+    throw new Error('這個房間已過期。')
+  }
+
   const roomRef = ref(db, `treasureRooms/${normalizedRoomCode}`)
   const snapshot = await get(roomRef)
 
   if (!snapshot.exists()) {
-    throw new Error('找不到這個隊伍房間，請確認房號')
+    throw new Error('找不到指定房間，請確認邀請連結或房間代碼。')
   }
 
-  const rawRoom = snapshot.val() as {
-    members?: Record<string, unknown>
-  }
+  const rawRoom = snapshot.val() as { members?: Record<string, unknown> }
   const memberCount = Object.keys(rawRoom.members ?? {}).length
   const currentUserExists = Boolean(rawRoom.members && rawRoom.members[user.uid])
 
   if (!currentUserExists && memberCount >= MAX_MEMBERS) {
-    throw new Error('這個隊伍已滿 8 人')
+    throw new Error('房間已滿。')
   }
 
   const memberRef = ref(db, `treasureRooms/${normalizedRoomCode}/members/${user.uid}`)
 
   await set(memberRef, {
-    nickname: options.nickname.trim() || `玩家 ${user.uid.slice(0, 4)}`,
-    isLeader: currentUserExists
-      ? Boolean((rawRoom.members as Record<string, { isLeader?: boolean }>)[user.uid]?.isLeader)
-      : false,
+    nickname: options.nickname.trim() || `隊員 ${user.uid.slice(0, 4)}`,
+    isLeader: false,
     joinedAt: serverTimestamp(),
   })
-  await update(ref(db, `treasureRooms/${normalizedRoomCode}/meta`), {
-    updatedAt: Date.now(),
-  })
+  await update(ref(db, `treasureRooms/${normalizedRoomCode}/meta`), { updatedAt: Date.now() })
   await onDisconnect(memberRef).remove()
 
-  return {
-    roomCode: normalizedRoomCode,
-    currentUserId: user.uid,
-  }
+  return { roomCode: normalizedRoomCode, currentUserId: user.uid }
 }
 
 export async function leaveRealtimeTreasureRoom(config: RuntimeConfig, roomCode: string): Promise<void> {
   const { db, user } = await ensureSignedIn(config)
-  const memberRef = ref(db, `treasureRooms/${roomCode}/members/${user.uid}`)
-
-  await remove(memberRef)
+  await remove(ref(db, `treasureRooms/${roomCode}/members/${user.uid}`))
 
   const membersSnapshot = await get(ref(db, `treasureRooms/${roomCode}/members`))
 
@@ -291,9 +274,7 @@ export async function leaveRealtimeTreasureRoom(config: RuntimeConfig, roomCode:
     return
   }
 
-  await update(ref(db, `treasureRooms/${roomCode}/meta`), {
-    updatedAt: Date.now(),
-  })
+  await update(ref(db, `treasureRooms/${roomCode}/meta`), { updatedAt: Date.now() })
 }
 
 export async function updateRealtimeTreasureNickname(
@@ -302,13 +283,10 @@ export async function updateRealtimeTreasureNickname(
   nickname: string,
 ): Promise<void> {
   const { db, user } = await ensureSignedIn(config)
-
   await update(ref(db, `treasureRooms/${roomCode}/members/${user.uid}`), {
-    nickname: nickname.trim() || `玩家 ${user.uid.slice(0, 4)}`,
+    nickname: nickname.trim() || `隊員 ${user.uid.slice(0, 4)}`,
   })
-  await update(ref(db, `treasureRooms/${roomCode}/meta`), {
-    updatedAt: Date.now(),
-  })
+  await update(ref(db, `treasureRooms/${roomCode}/meta`), { updatedAt: Date.now() })
 }
 
 export async function updateRealtimeTreasureRoute(
@@ -317,29 +295,11 @@ export async function updateRealtimeTreasureRoute(
   route: TreasurePartyRouteItem[],
 ): Promise<void> {
   const { db } = await ensureSignedIn(config)
-
   await set(ref(db, `treasureRooms/${roomCode}/route`), normalizeRoute(route))
-  await update(ref(db, `treasureRooms/${roomCode}/meta`), {
-    updatedAt: Date.now(),
-  })
+  await update(ref(db, `treasureRooms/${roomCode}/meta`), { updatedAt: Date.now() })
 }
 
-export async function updateRealtimeTreasureGrade(
-  config: RuntimeConfig,
-  roomCode: string,
-  gradeId: string,
-): Promise<void> {
-  const { db } = await ensureSignedIn(config)
-
-  await update(ref(db, `treasureRooms/${roomCode}/meta`), {
-    gradeId,
-    updatedAt: Date.now(),
-  })
-}
-
-export async function getRealtimeTreasureCurrentUserId(
-  config: RuntimeConfig,
-): Promise<string | null> {
+export async function getRealtimeTreasureCurrentUserId(config: RuntimeConfig): Promise<string | null> {
   const { user } = await ensureSignedIn(config)
   return user.uid
 }
@@ -355,26 +315,28 @@ export async function subscribeRealtimeTreasureRoom(
 
   return onValue(
     roomRef,
-    (snapshot) => {
+    async (snapshot) => {
       if (!snapshot.exists()) {
         onState(null)
         return
       }
 
       const rawRoom = snapshot.val() as {
-        meta?: {
-          roomName?: string
-          gradeId?: string
-          updatedAt?: number
-        }
+        meta?: { roomName?: string; gradeId?: string; updatedAt?: number; expiresAt?: number }
         members?: Record<string, { nickname?: string; isLeader?: boolean }>
         route?: TreasurePartyRouteItem[]
+      }
+
+      if (typeof rawRoom.meta?.expiresAt === 'number' && rawRoom.meta.expiresAt <= Date.now()) {
+        await remove(ref(db, `treasureRooms/${roomCode}`))
+        onState(null)
+        return
       }
 
       const members = Object.entries(rawRoom.members ?? {})
         .map(([userId, entry]) => ({
           userId,
-          nickname: typeof entry?.nickname === 'string' ? entry.nickname.trim() || '未命名' : '未命名',
+          nickname: typeof entry?.nickname === 'string' ? entry.nickname.trim() || '未命名成員' : '未命名成員',
           isLeader: Boolean(entry?.isLeader),
         }))
         .sort((left, right) => {
@@ -391,9 +353,12 @@ export async function subscribeRealtimeTreasureRoom(
 
       onState({
         roomCode,
-        roomName: rawRoom.meta?.roomName?.trim() || '寶圖隊伍',
+        roomName: rawRoom.meta?.roomName?.trim() || 'FF14 藏寶圖隊伍',
         gradeId: rawRoom.meta?.gradeId?.trim() || '',
-        updatedAtLabel: toUpdatedAtLabel(rawRoom.meta?.updatedAt),
+        updatedAtLabel: toDateTimeLabel(rawRoom.meta?.updatedAt),
+        expiresAtLabel: toDateTimeLabel(rawRoom.meta?.expiresAt),
+        expiresInMs:
+          typeof rawRoom.meta?.expiresAt === 'number' ? Math.max(0, rawRoom.meta.expiresAt - Date.now()) : 0,
         members,
         route: normalizeRoute(Array.isArray(rawRoom.route) ? rawRoom.route : []),
       })

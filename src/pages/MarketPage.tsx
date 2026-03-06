@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react'
+import { startTransition, useEffect, useMemo, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react'
 import { pageSources } from '../catalog/sources'
 import SourceAttribution from '../components/SourceAttribution'
 import {
@@ -12,27 +12,41 @@ import { formatGil, formatShortDateTime } from '../tools/marketFormat'
 import {
   applyOcrRowsToWorkbook,
   extractRowsFromOcrText,
+  type MarketOcrParsedRow,
   type MarketOcrTargetServer,
 } from '../tools/marketOcr'
 import { getErrorMessage } from '../utils/errors'
 
-const MARKET_STORAGE_KEY = 'ff14-helper.market.workbook.v2'
+const STORAGE_KEY = 'ff14-helper.market.workbench.v3'
 
-interface MarketActivityLogEntry {
+type ImportSource = 'ocr-image' | 'ocr-paste' | 'bulk' | 'manual'
+
+interface ActivityEntry {
   id: string
   createdAt: string
   message: string
 }
 
-interface MarketPageState {
+interface LatestImportSummary {
+  source: ImportSource
+  importedAt: string
+  rowCount: number
+  targetServer?: MarketOcrTargetServer
+}
+
+interface SavedState {
   rows: MarketWorkbookRow[]
   calculatorRowId: string | null
   listingPrice: number
   quantity: number
   taxRatePercent: number
   unitCost: number
-  activityLog: MarketActivityLogEntry[]
-  lastUpdatedAt: string | null
+  activityLog: ActivityEntry[]
+  latestImport: LatestImportSummary | null
+}
+
+interface PreviewRow extends MarketOcrParsedRow {
+  id: string
 }
 
 function createId(prefix: string): string {
@@ -40,18 +54,57 @@ function createId(prefix: string): string {
 }
 
 function createEmptyRow(): MarketWorkbookRow {
-  return {
-    id: createId('row'),
-    itemName: '',
-    chocoboPrice: 0,
-    mooglePrice: 0,
-    quantity: 1,
-    note: '',
+  return { id: createId('row'), itemName: '', chocoboPrice: 0, mooglePrice: 0, quantity: 1, note: '' }
+}
+
+function sourceLabel(source: ImportSource): string {
+  switch (source) {
+    case 'ocr-image':
+      return '圖片 OCR'
+    case 'ocr-paste':
+      return '貼上 OCR'
+    case 'bulk':
+      return '批次匯入'
+    case 'manual':
+      return '手動新增'
   }
 }
 
-function getDefaultState(): MarketPageState {
-  return {
+function serverLabel(server: MarketOcrTargetServer): string {
+  return server === 'chocobo' ? '陸行鳥' : '莫古力'
+}
+
+function filterLabel(filter: 'all' | 'different' | 'chocobo' | 'moogle'): string {
+  switch (filter) {
+    case 'different':
+      return '只看有價差'
+    case 'chocobo':
+      return '只看陸行鳥較便宜'
+    case 'moogle':
+      return '只看莫古力較便宜'
+    default:
+      return '全部資料'
+  }
+}
+
+function buildLogEntry(message: string): ActivityEntry {
+  return { id: createId('log'), createdAt: new Date().toISOString(), message }
+}
+
+function parseBulkRows(value: string): MarketOcrParsedRow[] {
+  return value
+    .split(/\r?\n/gu)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [itemName = '', price = '0', quantity = '1'] = line.split(/\t+/u).map((part) => part.trim())
+      return { itemName, price: Number(price), quantity: Number(quantity) }
+    })
+    .filter((row) => row.itemName.length > 0 && row.price > 0)
+}
+
+function loadSavedState(): SavedState {
+  const fallback: SavedState = {
     rows: [],
     calculatorRowId: null,
     listingPrice: 0,
@@ -59,27 +112,23 @@ function getDefaultState(): MarketPageState {
     taxRatePercent: 5,
     unitCost: 0,
     activityLog: [],
-    lastUpdatedAt: null,
+    latestImport: null,
   }
-}
 
-function loadSavedState(): MarketPageState {
   if (typeof window === 'undefined') {
-    return getDefaultState()
+    return fallback
   }
 
   try {
-    const raw = window.localStorage.getItem(MARKET_STORAGE_KEY)
-
+    const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) {
-      return getDefaultState()
+      return fallback
     }
 
-    const parsed = JSON.parse(raw) as Partial<MarketPageState>
-    const rows = Array.isArray(parsed.rows)
-      ? parsed.rows
-          .filter((row): row is MarketWorkbookRow => Boolean(row && typeof row === 'object'))
-          .map((row) =>
+    const parsed = JSON.parse(raw) as Partial<SavedState>
+    return {
+      rows: Array.isArray(parsed.rows)
+        ? parsed.rows.map((row) =>
             sanitizeWorkbookRow({
               id: typeof row.id === 'string' ? row.id : createId('row'),
               itemName: typeof row.itemName === 'string' ? row.itemName : '',
@@ -89,336 +138,508 @@ function loadSavedState(): MarketPageState {
               note: typeof row.note === 'string' ? row.note : '',
             }),
           )
-      : []
-
-    return {
-      rows,
+        : [],
       calculatorRowId: typeof parsed.calculatorRowId === 'string' ? parsed.calculatorRowId : null,
       listingPrice: Number(parsed.listingPrice ?? 0),
       quantity: Number(parsed.quantity ?? 1),
       taxRatePercent: Number(parsed.taxRatePercent ?? 5),
       unitCost: Number(parsed.unitCost ?? 0),
-      activityLog: Array.isArray(parsed.activityLog)
-        ? parsed.activityLog
-            .filter((entry): entry is MarketActivityLogEntry => Boolean(entry && typeof entry === 'object'))
-            .map((entry) => ({
-              id: typeof entry.id === 'string' ? entry.id : createId('log'),
-              createdAt:
-                typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString(),
-              message: typeof entry.message === 'string' ? entry.message : '已更新工作表',
-            }))
-            .slice(0, 10)
-        : [],
-      lastUpdatedAt: typeof parsed.lastUpdatedAt === 'string' ? parsed.lastUpdatedAt : null,
+      activityLog: Array.isArray(parsed.activityLog) ? parsed.activityLog.slice(0, 8) : [],
+      latestImport: parsed.latestImport ?? null,
     }
   } catch {
-    return getDefaultState()
-  }
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat('zh-TW', {
-    maximumFractionDigits: 2,
-  }).format(value)
-}
-
-function parseBulkRows(rawValue: string): MarketWorkbookRow[] {
-  return rawValue
-    .split(/\r?\n/gu)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [itemName = '', chocobo = '0', moogle = '0', quantity = '1', note = ''] = line
-        .split('\t')
-        .map((part) => part.trim())
-
-      return sanitizeWorkbookRow({
-        id: createId('row'),
-        itemName,
-        chocoboPrice: Number(chocobo),
-        mooglePrice: Number(moogle),
-        quantity: Number(quantity),
-        note,
-      })
-    })
-    .filter((row) => row.itemName.length > 0)
-}
-
-function buildLogEntry(message: string): MarketActivityLogEntry {
-  return {
-    id: createId('log'),
-    createdAt: new Date().toISOString(),
-    message,
+    return fallback
   }
 }
 
 function MarketPage() {
   const [savedState] = useState(() => loadSavedState())
-  const [rows, setRows] = useState<MarketWorkbookRow[]>(savedState.rows)
+  const [rows, setRows] = useState(savedState.rows)
   const [calculatorRowId, setCalculatorRowId] = useState<string | null>(savedState.calculatorRowId)
   const [listingPrice, setListingPrice] = useState(savedState.listingPrice)
   const [quantity, setQuantity] = useState(savedState.quantity)
   const [taxRatePercent, setTaxRatePercent] = useState(savedState.taxRatePercent)
   const [unitCost, setUnitCost] = useState(savedState.unitCost)
-  const [activityLog, setActivityLog] = useState<MarketActivityLogEntry[]>(savedState.activityLog)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(savedState.lastUpdatedAt)
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>(savedState.activityLog)
+  const [latestImport, setLatestImport] = useState<LatestImportSummary | null>(savedState.latestImport)
   const [draftRow, setDraftRow] = useState<MarketWorkbookRow>(() => createEmptyRow())
   const [bulkInput, setBulkInput] = useState('')
   const [message, setMessage] = useState<string | null>(null)
   const [ocrTargetServer, setOcrTargetServer] = useState<MarketOcrTargetServer>('chocobo')
   const [mergeOcrRows, setMergeOcrRows] = useState(true)
+  const [ocrPreviewRows, setOcrPreviewRows] = useState<PreviewRow[]>([])
   const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string | null>(null)
   const [ocrText, setOcrText] = useState('')
   const [ocrError, setOcrError] = useState<string | null>(null)
   const [ocrBusy, setOcrBusy] = useState(false)
+  const [ocrSource, setOcrSource] = useState<ImportSource>('ocr-image')
+  const [dropActive, setDropActive] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [tableFilter, setTableFilter] = useState<'all' | 'different' | 'chocobo' | 'moogle'>('all')
 
   useEffect(() => {
     window.localStorage.setItem(
-      MARKET_STORAGE_KEY,
-      JSON.stringify({
-        rows,
-        calculatorRowId,
-        listingPrice,
-        quantity,
-        taxRatePercent,
-        unitCost,
-        activityLog,
-        lastUpdatedAt,
-      }),
+      STORAGE_KEY,
+      JSON.stringify({ rows, calculatorRowId, listingPrice, quantity, taxRatePercent, unitCost, activityLog, latestImport }),
     )
-  }, [activityLog, calculatorRowId, lastUpdatedAt, listingPrice, quantity, rows, taxRatePercent, unitCost])
+  }, [activityLog, calculatorRowId, latestImport, listingPrice, quantity, rows, taxRatePercent, unitCost])
 
-  const runOcr = useCallback(
-    async (file: Blob): Promise<void> => {
-      setOcrBusy(true)
-      setOcrError(null)
-      setOcrText('')
-
+  useEffect(() => {
+    return () => {
       if (ocrPreviewUrl) {
         URL.revokeObjectURL(ocrPreviewUrl)
       }
-
-      const previewUrl = URL.createObjectURL(file)
-      setOcrPreviewUrl(previewUrl)
-
-      try {
-        const { createWorker } = await import('tesseract.js')
-        const worker = await createWorker('chi_tra+eng')
-        const result = await worker.recognize(file)
-        await worker.terminate()
-
-        const nextOcrText = result.data.text?.trim() ?? ''
-        const parsedRows = extractRowsFromOcrText(nextOcrText)
-
-        if (parsedRows.length === 0) {
-          setOcrText(nextOcrText)
-          setOcrError('OCR 已完成，但沒有辨識到可用的「道具名稱 + 價格」資料')
-          return
-        }
-
-        setOcrText(nextOcrText)
-
-        startTransition(() => {
-          const nextRows = applyOcrRowsToWorkbook({
-            existingRows: rows,
-            parsedRows,
-            targetServer: ocrTargetServer,
-            mergeExistingRows: mergeOcrRows,
-            createRowId: () => createId('row'),
-          }).map((row) => sanitizeWorkbookRow(row))
-          const nextMessage = `已從截圖辨識匯入 ${parsedRows.length} 筆 ${ocrTargetServer === 'chocobo' ? '陸行鳥' : '莫古力'} 價格`
-          const logEntry = buildLogEntry(nextMessage)
-
-          setRows(nextRows)
-          setActivityLog((current) => [logEntry, ...current].slice(0, 8))
-          setLastUpdatedAt(logEntry.createdAt)
-          setMessage(nextMessage)
-        })
-      } catch (error) {
-        setOcrError(getErrorMessage(error))
-      } finally {
-        setOcrBusy(false)
-      }
-    },
-    [mergeOcrRows, ocrPreviewUrl, ocrTargetServer, rows],
-  )
-
-  useEffect(() => {
-    async function handlePaste(event: ClipboardEvent): Promise<void> {
-      const items = event.clipboardData?.items
-
-      if (!items) {
-        return
-      }
-
-      const imageItem = Array.from(items).find((item) => item.type.startsWith('image/'))
-
-      if (!imageItem) {
-        return
-      }
-
-      event.preventDefault()
-      const file = imageItem.getAsFile()
-
-      if (!file) {
-        return
-      }
-
-      await runOcr(file)
     }
-
-    window.addEventListener('paste', handlePaste)
-
-    return () => {
-      window.removeEventListener('paste', handlePaste)
-    }
-  }, [runOcr])
+  }, [ocrPreviewUrl])
 
   const workbookSummary = useMemo(() => buildWorkbookSummary(rows), [rows])
-  const selectedCalculatorRow = useMemo(
-    () => rows.find((row) => row.id === calculatorRowId) ?? null,
-    [calculatorRowId, rows],
-  )
+  const selectedCalculatorRow = useMemo(() => rows.find((row) => row.id === calculatorRowId) ?? null, [calculatorRowId, rows])
   const marketSummary = useMemo(
-    () =>
-      calculateMarketboardSummary({
-        listingPrice,
-        quantity,
-        taxRatePercent,
-        unitCost,
-      }),
+    () => calculateMarketboardSummary({ listingPrice, quantity, taxRatePercent, unitCost }),
     [listingPrice, quantity, taxRatePercent, unitCost],
   )
+  const filteredRows = useMemo(() => {
+    return rows.filter((row) => {
+      const normalizedQuery = searchQuery.trim().toLocaleLowerCase('zh-TW')
+      const matchesQuery =
+        normalizedQuery.length === 0 || row.itemName.toLocaleLowerCase('zh-TW').includes(normalizedQuery)
+
+      if (!matchesQuery) {
+        return false
+      }
+
+      const comparison = compareTwServerPrices([
+        { serverName: '陸行鳥', pricePerUnit: row.chocoboPrice, quantity: row.quantity },
+        { serverName: '莫古力', pricePerUnit: row.mooglePrice, quantity: row.quantity },
+      ])
+
+      switch (tableFilter) {
+        case 'different':
+          return row.chocoboPrice !== row.mooglePrice
+        case 'chocobo':
+          return comparison.cheaperServer === '陸行鳥'
+        case 'moogle':
+          return comparison.cheaperServer === '莫古力'
+        default:
+          return true
+      }
+    })
+  }, [rows, searchQuery, tableFilter])
 
   function pushActivity(messageText: string): void {
-    const entry = buildLogEntry(messageText)
-
-    setActivityLog((current) => [entry, ...current].slice(0, 8))
-    setLastUpdatedAt(entry.createdAt)
+    const nextEntry = buildLogEntry(messageText)
+    setActivityLog((current) => [nextEntry, ...current].slice(0, 8))
     setMessage(messageText)
   }
 
-  function updateRows(nextRows: MarketWorkbookRow[], logMessage: string): void {
-    setRows(nextRows)
-    pushActivity(logMessage)
+  async function runOcr(file: Blob, source: ImportSource): Promise<void> {
+    setOcrBusy(true)
+    setOcrError(null)
+    setMessage(null)
+    setOcrText('')
+    if (ocrPreviewUrl) {
+      URL.revokeObjectURL(ocrPreviewUrl)
+    }
+    setOcrPreviewUrl(URL.createObjectURL(file))
+    setOcrSource(source)
+
+    try {
+      const { createWorker } = await import('tesseract.js')
+      const worker = await createWorker('chi_tra+eng')
+      const result = await worker.recognize(file)
+      await worker.terminate()
+      const nextText = result.data.text?.trim() ?? ''
+      const parsedRows = extractRowsFromOcrText(nextText)
+      setOcrText(nextText)
+      setOcrPreviewRows(parsedRows.map((row) => ({ ...row, id: createId('preview') })))
+      if (parsedRows.length === 0) {
+        setOcrError('OCR 沒有辨識出可用資料，請改用更清楚的截圖，或直接手動修正預覽內容。')
+      }
+    } catch (error) {
+      setOcrPreviewRows([])
+      setOcrError(getErrorMessage(error))
+    } finally {
+      setOcrBusy(false)
+    }
   }
 
-  function updateRow(rowId: string, patch: Partial<MarketWorkbookRow>): void {
-    setRows((currentRows) =>
-      currentRows.map((row) =>
-        row.id === rowId
-          ? sanitizeWorkbookRow({
-              ...row,
-              ...patch,
-            })
-          : row,
-      ),
-    )
+  function commitImport(parsedRows: MarketOcrParsedRow[], source: ImportSource): void {
+    const nextRows = applyOcrRowsToWorkbook({
+      existingRows: rows,
+      parsedRows,
+      targetServer: ocrTargetServer,
+      mergeExistingRows: mergeOcrRows,
+      createRowId: () => createId('row'),
+    }).map((row) => sanitizeWorkbookRow(row))
+    const importedAt = new Date().toISOString()
+    const nextMessage = `已從 ${sourceLabel(source)} 匯入 ${parsedRows.length} 筆資料到 ${serverLabel(ocrTargetServer)}。`
 
-    pushActivity('已更新一筆查價資料')
+    startTransition(() => {
+      setRows(nextRows)
+      setLatestImport({ source, importedAt, rowCount: parsedRows.length, targetServer: ocrTargetServer })
+      setActivityLog((current) => [buildLogEntry(nextMessage), ...current].slice(0, 8))
+      setMessage(nextMessage)
+      setOcrPreviewRows([])
+    })
   }
 
-  function addDraftRow(): void {
-    if (!draftRow.itemName.trim()) {
-      setMessage('請先輸入道具名稱')
+  function applyPreviewRows(): void {
+    const parsedRows = ocrPreviewRows
+      .map((row) => ({ itemName: row.itemName.trim(), price: Number(row.price), quantity: Math.max(1, Number(row.quantity)) }))
+      .filter((row) => row.itemName.length > 0 && row.price > 0)
+
+    if (parsedRows.length === 0) {
+      setOcrError('預覽區沒有可寫入的資料。')
       return
     }
 
-    const nextRow = sanitizeWorkbookRow({
-      ...draftRow,
-      id: createId('row'),
-    })
-
-    updateRows([...rows, nextRow], `已新增「${nextRow.itemName}」到工作表`)
-    setDraftRow(createEmptyRow())
+    commitImport(parsedRows, ocrSource)
   }
 
   function importBulkRows(): void {
     const parsedRows = parseBulkRows(bulkInput)
 
     if (parsedRows.length === 0) {
-      setMessage('沒有讀到可匯入的資料，請確認每列使用 Tab 分隔欄位')
+      setMessage('批次匯入需要 Tab 分隔格式：道具名稱 / 價格 / 數量。')
       return
     }
 
-    updateRows([...rows, ...parsedRows], `已匯入 ${parsedRows.length} 筆手動資料`)
+    commitImport(parsedRows, 'bulk')
     setBulkInput('')
   }
 
-  function removeRow(rowId: string): void {
-    updateRows(
-      rows.filter((row) => row.id !== rowId),
-      '已移除一筆查價資料',
-    )
-    setCalculatorRowId((currentRowId) => (currentRowId === rowId ? null : currentRowId))
-  }
-
-  function clearRows(): void {
-    setRows([])
-    setCalculatorRowId(null)
-    pushActivity('已清空整個查價工作表')
-  }
-
-  function applyRowToCalculator(row: MarketWorkbookRow, preferred: 'cheaper' | 'chocobo' | 'moogle'): void {
-    const sanitized = sanitizeWorkbookRow(row)
-    const comparison = compareTwServerPrices([
-      {
-        serverName: '陸行鳥',
-        pricePerUnit: sanitized.chocoboPrice,
-        quantity: sanitized.quantity,
-      },
-      {
-        serverName: '莫古力',
-        pricePerUnit: sanitized.mooglePrice,
-        quantity: sanitized.quantity,
-      },
-    ])
-
-    let nextPrice = sanitized.chocoboPrice
-
-    if (preferred === 'moogle') {
-      nextPrice = sanitized.mooglePrice
-    } else if (preferred === 'cheaper' && comparison.cheaperServer === '莫古力') {
-      nextPrice = sanitized.mooglePrice
+  function addDraftRow(): void {
+    if (!draftRow.itemName.trim()) {
+      setMessage('請先輸入道具名稱。')
+      return
     }
 
+    const nextRow = sanitizeWorkbookRow({ ...draftRow, id: createId('row') })
+    setRows((current) => [...current, nextRow])
+    setLatestImport({ source: 'manual', importedAt: new Date().toISOString(), rowCount: 1 })
+    pushActivity(`已手動新增 ${nextRow.itemName}。`)
+    setDraftRow(createEmptyRow())
+  }
+
+  function updateRow(rowId: string, patch: Partial<MarketWorkbookRow>): void {
+    setRows((currentRows) => currentRows.map((row) => (row.id === rowId ? sanitizeWorkbookRow({ ...row, ...patch }) : row)))
+    pushActivity('已更新工作表資料。')
+  }
+
+  function removeRow(rowId: string): void {
+    setRows((current) => current.filter((row) => row.id !== rowId))
+    setCalculatorRowId((current) => (current === rowId ? null : current))
+    pushActivity('已移除一筆資料。')
+  }
+
+  function applyRowToCalculator(row: MarketWorkbookRow): void {
+    const comparison = compareTwServerPrices([
+      { serverName: '陸行鳥', pricePerUnit: row.chocoboPrice, quantity: row.quantity },
+      { serverName: '莫古力', pricePerUnit: row.mooglePrice, quantity: row.quantity },
+    ])
+
     setCalculatorRowId(row.id)
-    setListingPrice(nextPrice)
-    setQuantity(sanitized.quantity)
-    pushActivity(`已將「${sanitized.itemName || '未命名道具'}」帶入市場板試算`)
+    setListingPrice(comparison.cheaperServer === '莫古力' ? row.mooglePrice : row.chocoboPrice)
+    setQuantity(row.quantity)
+    pushActivity(`已將 ${row.itemName || '未命名道具'} 帶入市場板試算。`)
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>): void {
     const file = event.target.files?.[0]
+    if (file) {
+      void runOcr(file, 'ocr-image')
+    }
+    event.target.value = ''
+  }
 
+  function handlePaste(event: ClipboardEvent<HTMLDivElement>): void {
+    const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith('image/'))
+    const file = imageItem?.getAsFile()
     if (!file) {
       return
     }
+    event.preventDefault()
+    void runOcr(file, 'ocr-paste')
+  }
 
-    void runOcr(file)
-    event.target.value = ''
+  function handleDrop(event: DragEvent<HTMLDivElement>): void {
+    event.preventDefault()
+    setDropActive(false)
+    const file = event.dataTransfer.files?.[0]
+    if (!file || !file.type.startsWith('image/')) {
+      setOcrError('拖曳的檔案不是圖片。')
+      return
+    }
+    void runOcr(file, 'ocr-image')
   }
 
   return (
     <div className="page-grid">
       <section className="hero-card">
-        <p className="eyebrow">繁中服查價</p>
-        <h2>陸行鳥 / 莫古力雙服工作表</h2>
+        <p className="eyebrow">繁中服比價助手</p>
+        <h2>陸行鳥 / 莫古力 工作流</h2>
         <p className="lead">
-          本頁參考 FFXIV Market (beherw) 的工作流程，整合雙服比價、最近異動摘要、手動匯入與
-          截圖 OCR 匯入。本站不保證即時抓到官方市場資料，因此把焦點放在你真正會用到的整理與比價流程。
+          這個頁面只處理繁中服比價流程。你可以上傳截圖做 OCR，先在預覽區校對，再寫入工作表、查看最近匯入紀錄與價格試算。
+          本站不假裝有不存在的繁中服即時 API。
         </p>
         <div className="badge-row">
-          <span className="badge badge--positive">繁體中文介面</span>
-          <span className="badge">雙服工作表</span>
-          <span className="badge badge--warning">支援貼上或上傳截圖辨識</span>
+          <span className="badge badge--positive">繁中服限定</span>
+          <span className="badge">OCR 匯入</span>
+          <span className="badge badge--warning">價格資料以你的截圖與手動整理為準</span>
         </div>
       </section>
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>最新資料與最近異動</h2>
-          <p>這裡會顯示目前工作表最後更新時間，以及最近做了哪些匯入或調整。</p>
+          <h2>步驟 1. 匯入截圖或批次文字</h2>
+          <p>先指定這次 OCR 要寫進哪一個伺服器，再貼上截圖、拖曳圖片或用 Tab 分隔文字批次匯入。</p>
+        </div>
+        <div className="field-grid">
+          <label className="field">
+            <span className="field-label">OCR 目標伺服器</span>
+            <select className="input-select" onChange={(event) => setOcrTargetServer(event.target.value as MarketOcrTargetServer)} value={ocrTargetServer}>
+              <option value="chocobo">陸行鳥</option>
+              <option value="moogle">莫古力</option>
+            </select>
+          </label>
+          <label className="field">
+            <span className="field-label">寫入方式</span>
+            <select className="input-select" onChange={(event) => setMergeOcrRows(event.target.value === 'merge')} value={mergeOcrRows ? 'merge' : 'replace'}>
+              <option value="merge">合併到現有工作表</option>
+              <option value="replace">清空後重新匯入</option>
+            </select>
+          </label>
+          <label className="field">
+            <span className="field-label">上傳圖片</span>
+            <input accept="image/*" className="input-text" onChange={handleFileChange} type="file" />
+          </label>
+        </div>
+
+        <div
+          className={dropActive ? 'drop-zone drop-zone--active' : 'drop-zone'}
+          onDragEnter={() => setDropActive(true)}
+          onDragLeave={() => setDropActive(false)}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={handleDrop}
+          onPaste={handlePaste}
+          tabIndex={0}
+        >
+          <strong>把截圖拖進來，或點這裡後按 Ctrl+V 貼上圖片</strong>
+          <p>建議使用清楚的市場板截圖。若 OCR 不穩定，仍可先進預覽區手動修正。</p>
+        </div>
+
+        <label className="field">
+          <span className="field-label">批次匯入文字</span>
+          <textarea
+            className="input-text"
+            onChange={(event) => setBulkInput(event.target.value)}
+            placeholder={'道具名稱\t價格\t數量\n高品質素材\t12500\t3'}
+            rows={4}
+            value={bulkInput}
+          />
+        </label>
+
+        <div className="button-row">
+          <button className="button button--ghost" onClick={importBulkRows} type="button">
+            匯入批次文字
+          </button>
+        </div>
+
+        {ocrBusy ? (
+          <div className="callout">
+            <span className="callout-title">OCR 辨識中</span>
+            <span className="callout-body">正在分析圖片文字，請稍候。</span>
+          </div>
+        ) : null}
+        {ocrError ? (
+          <div className="callout callout--error">
+            <span className="callout-title">OCR 錯誤</span>
+            <span className="callout-body">{ocrError}</span>
+          </div>
+        ) : null}
+        {message ? (
+          <div className="callout callout--success">
+            <span className="callout-title">完成</span>
+            <span className="callout-body">{message}</span>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="page-card">
+        <div className="section-heading">
+          <h2>步驟 2. 校對 OCR 預覽</h2>
+          <p>OCR 匯入後不會直接覆寫工作表。先在這裡修正品名、價格和數量，再決定是否寫入。</p>
+        </div>
+        {ocrPreviewUrl || ocrPreviewRows.length > 0 ? (
+          <div className="page-grid">
+            <div className="field-grid">
+              {ocrPreviewUrl ? (
+                <div className="field">
+                  <span className="field-label">目前圖片</span>
+                  <img alt="OCR 預覽" className="market-ocr-preview" src={ocrPreviewUrl} />
+                </div>
+              ) : null}
+              <label className="field">
+                <span className="field-label">OCR 原始文字</span>
+                <textarea className="input-text" readOnly rows={10} value={ocrText} />
+              </label>
+            </div>
+            {ocrPreviewRows.length === 0 ? (
+              <div className="empty-state">
+                <strong>預覽區沒有可寫入資料</strong>
+                <p>請換一張更清楚的截圖，或改用批次匯入。</p>
+              </div>
+            ) : (
+              <>
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>道具名稱</th>
+                        <th>價格</th>
+                        <th>數量</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ocrPreviewRows.map((row) => (
+                        <tr key={row.id}>
+                          <td>
+                            <input
+                              className="input-text"
+                              onChange={(event) =>
+                                setOcrPreviewRows((current) =>
+                                  current.map((entry) => (entry.id === row.id ? { ...entry, itemName: event.target.value } : entry)),
+                                )
+                              }
+                              type="text"
+                              value={row.itemName}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="input-text"
+                              min="0"
+                              onChange={(event) =>
+                                setOcrPreviewRows((current) =>
+                                  current.map((entry) => (entry.id === row.id ? { ...entry, price: Number(event.target.value) } : entry)),
+                                )
+                              }
+                              step="1"
+                              type="number"
+                              value={row.price}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="input-text"
+                              min="1"
+                              onChange={(event) =>
+                                setOcrPreviewRows((current) =>
+                                  current.map((entry) => (entry.id === row.id ? { ...entry, quantity: Number(event.target.value) } : entry)),
+                                )
+                              }
+                              step="1"
+                              type="number"
+                              value={row.quantity}
+                            />
+                          </td>
+                          <td>
+                            <button className="button button--ghost" onClick={() => setOcrPreviewRows((current) => current.filter((entry) => entry.id !== row.id))} type="button">
+                              移除
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="button-row">
+                  <button className="button button--primary" onClick={applyPreviewRows} type="button">
+                    寫入工作表
+                  </button>
+                  <button
+                    className="button button--ghost"
+                    onClick={() => {
+                      setOcrPreviewRows([])
+                      setOcrText('')
+                      setOcrError(null)
+                    }}
+                    type="button"
+                  >
+                    清空預覽
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <strong>尚未產生 OCR 預覽</strong>
+            <p>請先貼上或上傳市場板截圖，再到這裡確認辨識結果。</p>
+          </div>
+        )}
+      </section>
+
+      <section className="source-grid">
+        <article className="page-card">
+          <div className="section-heading">
+            <h2>最新匯入資料</h2>
+            <p>這裡顯示最近一次 OCR、批次匯入或手動新增的摘要，方便確認目前工作表的來源。</p>
+          </div>
+          {latestImport ? (
+            <div className="detail-list">
+              <div>
+                <strong>來源：</strong>
+                {sourceLabel(latestImport.source)}
+              </div>
+              <div>
+                <strong>時間：</strong>
+                {formatShortDateTime(latestImport.importedAt)}
+              </div>
+              <div>
+                <strong>筆數：</strong>
+                {latestImport.rowCount}
+              </div>
+              <div>
+                <strong>目標：</strong>
+                {latestImport.targetServer ? serverLabel(latestImport.targetServer) : '工作表'}
+              </div>
+            </div>
+          ) : (
+            <div className="empty-state">
+              <strong>尚無匯入紀錄</strong>
+              <p>請先匯入圖片、批次文字或手動新增資料。</p>
+            </div>
+          )}
+        </article>
+
+        <article className="page-card">
+          <div className="section-heading">
+            <h2>最近變更</h2>
+            <p>用來追蹤你最近更新了哪些資料，不會被描述成伺服器最新價格。</p>
+          </div>
+          {activityLog.length === 0 ? (
+            <div className="empty-state">
+              <strong>尚無變更</strong>
+              <p>開始匯入或編輯資料後，這裡就會顯示最近操作。</p>
+            </div>
+          ) : (
+            <div className="detail-list">
+              {activityLog.map((entry) => (
+                <div key={entry.id}>
+                  <strong>{formatShortDateTime(entry.createdAt)}</strong> {entry.message}
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+      </section>
+
+      <section className="page-card">
+        <div className="section-heading">
+          <h2>步驟 3. 繁中服比價工作表</h2>
+          <p>工作表只比較陸行鳥與莫古力。你可以持續修正價格、數量與備註，再挑便宜的伺服器帶去試算。</p>
         </div>
 
         <div className="stats-grid">
@@ -427,232 +648,15 @@ function MarketPage() {
             <div className="stat-value">{rows.length}</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">最後更新</div>
-            <div className="stat-value">{formatShortDateTime(lastUpdatedAt ?? undefined)}</div>
-          </article>
-          <article className="stat-card">
-            <div className="stat-label">最新資料</div>
-            <div className="stat-value">
-              {activityLog[0]?.message ?? '尚未建立任何查價資料'}
-            </div>
-          </article>
-        </div>
-
-        {activityLog.length === 0 ? (
-          <div className="empty-state">
-            <strong>目前還沒有異動紀錄</strong>
-            <p>你新增道具、批次匯入或使用 OCR 後，這裡會顯示最近更新的內容。</p>
-          </div>
-        ) : (
-          <div className="detail-list">
-            {activityLog.map((entry) => (
-              <div key={entry.id}>
-                <strong>{formatShortDateTime(entry.createdAt)}</strong> {entry.message}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="page-card">
-        <div className="section-heading">
-          <h2>新增或匯入價格</h2>
-          <p>可逐筆輸入、批次貼上，或用截圖 OCR 匯入。貼上截圖支援直接從剪貼簿 Ctrl+V。</p>
-        </div>
-
-        <div className="field-grid">
-          <label className="field">
-            <span className="field-label">道具名稱</span>
-            <input
-              className="input-text"
-              onChange={(event) => setDraftRow((current) => ({ ...current, itemName: event.target.value }))}
-              placeholder="例如：靈砂油"
-              type="text"
-              value={draftRow.itemName}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">陸行鳥價格</span>
-            <input
-              className="input-text"
-              min="0"
-              onChange={(event) =>
-                setDraftRow((current) => ({ ...current, chocoboPrice: Number(event.target.value) }))
-              }
-              step="1"
-              type="number"
-              value={draftRow.chocoboPrice}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">莫古力價格</span>
-            <input
-              className="input-text"
-              min="0"
-              onChange={(event) =>
-                setDraftRow((current) => ({ ...current, mooglePrice: Number(event.target.value) }))
-              }
-              step="1"
-              type="number"
-              value={draftRow.mooglePrice}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">數量</span>
-            <input
-              className="input-text"
-              min="1"
-              onChange={(event) =>
-                setDraftRow((current) => ({ ...current, quantity: Number(event.target.value) }))
-              }
-              step="1"
-              type="number"
-              value={draftRow.quantity}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">備註</span>
-            <input
-              className="input-text"
-              onChange={(event) => setDraftRow((current) => ({ ...current, note: event.target.value }))}
-              placeholder="例如：HQ 或限量"
-              type="text"
-              value={draftRow.note}
-            />
-          </label>
-        </div>
-
-        <div className="button-row">
-          <button className="button button--primary" onClick={addDraftRow} type="button">
-            新增到工作表
-          </button>
-          <button className="button button--ghost" onClick={clearRows} type="button">
-            清空工作表
-          </button>
-          <a
-            className="button button--ghost"
-            href="https://beherw.github.io/FFXIV_Market/"
-            rel="noreferrer"
-            target="_blank"
-          >
-            開啟參考網站
-          </a>
-        </div>
-
-        <label className="field">
-          <span className="field-label">批次貼上（每列：道具名稱 / 陸行鳥 / 莫古力 / 數量 / 備註，以 Tab 分隔）</span>
-          <textarea
-            className="input-text"
-            onChange={(event) => setBulkInput(event.target.value)}
-            placeholder={'靈砂油\t12500\t13200\t3\t\n匠人藥水\t8800\t9000\t2\tHQ'}
-            rows={4}
-            value={bulkInput}
-          />
-        </label>
-
-        <div className="button-row">
-          <button className="button button--ghost" onClick={importBulkRows} type="button">
-            匯入批次資料
-          </button>
-        </div>
-
-        <div className="field-grid">
-          <label className="field">
-            <span className="field-label">OCR 匯入目標伺服器</span>
-            <select
-              className="input-select"
-              onChange={(event) => setOcrTargetServer(event.target.value as MarketOcrTargetServer)}
-              value={ocrTargetServer}
-            >
-              <option value="chocobo">陸行鳥</option>
-              <option value="moogle">莫古力</option>
-            </select>
-          </label>
-          <label className="field">
-            <span className="field-label">OCR 匯入模式</span>
-            <select
-              className="input-select"
-              onChange={(event) => setMergeOcrRows(event.target.value === 'merge')}
-              value={mergeOcrRows ? 'merge' : 'replace'}
-            >
-              <option value="merge">合併到現有工作表</option>
-              <option value="replace">建立新的工作表內容</option>
-            </select>
-          </label>
-          <label className="field">
-            <span className="field-label">上傳截圖</span>
-            <input
-              accept="image/*"
-              className="input-text"
-              onChange={handleFileChange}
-              type="file"
-            />
-          </label>
-        </div>
-
-        <div className="callout">
-          <span className="callout-title">截圖查價</span>
-          <span className="callout-body">
-            你可以直接把遊戲或其他表格截圖貼到這個頁面，本站會用 OCR 抽出「道具名稱 + 價格」並匯入工作表。
-          </span>
-        </div>
-
-        {ocrBusy ? (
-          <div className="callout">
-            <span className="callout-title">OCR 辨識中</span>
-            <span className="callout-body">正在分析截圖，這通常需要幾秒鐘。</span>
-          </div>
-        ) : null}
-
-        {ocrError ? (
-          <div className="callout callout--error">
-            <span className="callout-title">OCR 提示</span>
-            <span className="callout-body">{ocrError}</span>
-          </div>
-        ) : null}
-
-        {ocrPreviewUrl ? (
-          <div className="field-grid">
-            <div className="field">
-              <span className="field-label">最近辨識的截圖</span>
-              <img
-                alt="OCR 預覽"
-                className="market-ocr-preview"
-                src={ocrPreviewUrl}
-              />
-            </div>
-            <label className="field">
-              <span className="field-label">OCR 原始文字</span>
-              <textarea className="input-text" readOnly rows={8} value={ocrText} />
-            </label>
-          </div>
-        ) : null}
-
-        {message ? (
-          <div className="callout callout--success">
-            <span className="callout-title">狀態</span>
-            <span className="callout-body">{message}</span>
-          </div>
-        ) : null}
-      </section>
-
-      <section className="page-card">
-        <div className="section-heading">
-          <h2>雙服總覽</h2>
-          <p>先看整體買在哪一邊比較省，再決定逐項拆單。</p>
-        </div>
-
-        <div className="stats-grid">
-          <article className="stat-card">
-            <div className="stat-label">全部買陸行鳥</div>
+            <div className="stat-label">陸行鳥總成本</div>
             <div className="stat-value">{formatGil(workbookSummary.chocoboTotal)}</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">全部買莫古力</div>
+            <div className="stat-label">莫古力總成本</div>
             <div className="stat-value">{formatGil(workbookSummary.moogleTotal)}</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">逐項挑低價</div>
+            <div className="stat-label">混合最低成本</div>
             <div className="stat-value">{formatGil(workbookSummary.mixedCheapestTotal)}</div>
           </article>
           <article className="stat-card">
@@ -664,240 +668,198 @@ function MarketPage() {
             <div className="stat-value">{formatGil(workbookSummary.savingsVsMoogle)}</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">較便宜分布</div>
-            <div className="stat-value">
-              陸行鳥 {workbookSummary.cheaperOnChocobo} / 莫古力 {workbookSummary.cheaperOnMoogle} / 同價{' '}
-              {workbookSummary.equalPriceItems}
-            </div>
+            <div className="stat-label">陸行鳥較低價</div>
+            <div className="stat-value">{workbookSummary.cheaperOnChocobo} 項</div>
+          </article>
+          <article className="stat-card">
+            <div className="stat-label">莫古力較低價</div>
+            <div className="stat-value">{workbookSummary.cheaperOnMoogle} 項</div>
           </article>
         </div>
-      </section>
 
-      <section className="page-card">
-        <div className="section-heading">
-          <h2>工作表</h2>
-          <p>每一列都可以即時編修，並把單列價格帶入下方市場板試算。</p>
+        <div className="field-grid">
+          <label className="field">
+            <span className="field-label">搜尋道具</span>
+            <input
+              className="input-text"
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="輸入道具名稱"
+              type="text"
+              value={searchQuery}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">工作表篩選</span>
+            <select className="input-select" onChange={(event) => setTableFilter(event.target.value as typeof tableFilter)} value={tableFilter}>
+              <option value="all">全部資料</option>
+              <option value="different">只看有價差</option>
+              <option value="chocobo">只看陸行鳥較便宜</option>
+              <option value="moogle">只看莫古力較便宜</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="badge-row">
+          <span className="badge">目前顯示 {filteredRows.length} / {rows.length} 筆</span>
+          {searchQuery.trim() ? <span className="badge badge--positive">搜尋：{searchQuery.trim()}</span> : null}
+          {tableFilter !== 'all' ? <span className="badge badge--warning">篩選：{filterLabel(tableFilter)}</span> : null}
         </div>
 
         {rows.length === 0 ? (
           <div className="empty-state">
-            <strong>目前還沒有任何查價資料</strong>
-            <p>你可以手動新增、批次貼上，或直接貼截圖讓 OCR 幫你整理。</p>
+            <strong>工作表目前是空的</strong>
+            <p>請先從 OCR 預覽、批次文字或手動新增資料。</p>
+          </div>
+        ) : filteredRows.length === 0 ? (
+          <div className="empty-state">
+            <strong>目前篩選沒有符合的資料</strong>
+            <p>請調整搜尋字詞或切換篩選條件。</p>
           </div>
         ) : (
-          <div className="treasure-card-grid">
-            {rows.map((row) => {
-              const comparison = compareTwServerPrices([
-                {
-                  serverName: '陸行鳥',
-                  pricePerUnit: row.chocoboPrice,
-                  quantity: row.quantity,
-                },
-                {
-                  serverName: '莫古力',
-                  pricePerUnit: row.mooglePrice,
-                  quantity: row.quantity,
-                },
-              ])
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>道具名稱</th>
+                  <th>陸行鳥</th>
+                  <th>莫古力</th>
+                  <th>數量</th>
+                  <th>較低價</th>
+                  <th>價差</th>
+                  <th>備註</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.map((row) => {
+                  const comparison = compareTwServerPrices([
+                    { serverName: '陸行鳥', pricePerUnit: row.chocoboPrice, quantity: row.quantity },
+                    { serverName: '莫古力', pricePerUnit: row.mooglePrice, quantity: row.quantity },
+                  ])
 
-              return (
-                <article
-                  key={row.id}
-                  className={
-                    row.id === selectedCalculatorRow?.id ? 'treasure-card treasure-card--active' : 'treasure-card'
-                  }
-                >
-                  <div className="field-grid">
-                    <label className="field">
-                      <span className="field-label">道具名稱</span>
-                      <input
-                        className="input-text"
-                        onChange={(event) => updateRow(row.id, { itemName: event.target.value })}
-                        type="text"
-                        value={row.itemName}
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">陸行鳥</span>
-                      <input
-                        className="input-text"
-                        min="0"
-                        onChange={(event) => updateRow(row.id, { chocoboPrice: Number(event.target.value) })}
-                        step="1"
-                        type="number"
-                        value={row.chocoboPrice}
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">莫古力</span>
-                      <input
-                        className="input-text"
-                        min="0"
-                        onChange={(event) => updateRow(row.id, { mooglePrice: Number(event.target.value) })}
-                        step="1"
-                        type="number"
-                        value={row.mooglePrice}
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">數量</span>
-                      <input
-                        className="input-text"
-                        min="1"
-                        onChange={(event) => updateRow(row.id, { quantity: Number(event.target.value) })}
-                        step="1"
-                        type="number"
-                        value={row.quantity}
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">備註</span>
-                      <input
-                        className="input-text"
-                        onChange={(event) => updateRow(row.id, { note: event.target.value })}
-                        type="text"
-                        value={row.note}
-                      />
-                    </label>
-                  </div>
-
-                  <div className="stats-grid">
-                    <article className="stat-card">
-                      <div className="stat-label">較便宜</div>
-                      <div className="stat-value">{comparison.cheaperServer ?? '無法判斷'}</div>
-                    </article>
-                    <article className="stat-card">
-                      <div className="stat-label">價差</div>
-                      <div className="stat-value">{formatGil(comparison.priceSpread)}</div>
-                    </article>
-                    <article className="stat-card">
-                      <div className="stat-label">最低總價</div>
-                      <div className="stat-value">
-                        {formatGil(Math.min(row.chocoboPrice, row.mooglePrice) * Math.max(1, row.quantity))}
-                      </div>
-                    </article>
-                  </div>
-
-                  <div className="button-row">
-                    <button
-                      className="button button--primary"
-                      onClick={() => applyRowToCalculator(row, 'cheaper')}
-                      type="button"
-                    >
-                      帶入較低價
-                    </button>
-                    <button
-                      className="button button--ghost"
-                      onClick={() => applyRowToCalculator(row, 'chocobo')}
-                      type="button"
-                    >
-                      帶入陸行鳥
-                    </button>
-                    <button
-                      className="button button--ghost"
-                      onClick={() => applyRowToCalculator(row, 'moogle')}
-                      type="button"
-                    >
-                      帶入莫古力
-                    </button>
-                    <button className="button button--ghost" onClick={() => removeRow(row.id)} type="button">
-                      移除
-                    </button>
-                  </div>
-                </article>
-              )
-            })}
+                  return (
+                    <tr key={row.id}>
+                      <td>
+                        <input className="input-text" onChange={(event) => updateRow(row.id, { itemName: event.target.value })} type="text" value={row.itemName} />
+                      </td>
+                      <td>
+                        <input className="input-text" min="0" onChange={(event) => updateRow(row.id, { chocoboPrice: Number(event.target.value) })} step="1" type="number" value={row.chocoboPrice} />
+                      </td>
+                      <td>
+                        <input className="input-text" min="0" onChange={(event) => updateRow(row.id, { mooglePrice: Number(event.target.value) })} step="1" type="number" value={row.mooglePrice} />
+                      </td>
+                      <td>
+                        <input className="input-text" min="1" onChange={(event) => updateRow(row.id, { quantity: Number(event.target.value) })} step="1" type="number" value={row.quantity} />
+                      </td>
+                      <td>{comparison.cheaperServer ?? '相同'}</td>
+                      <td>{formatGil(comparison.priceSpread)}</td>
+                      <td>
+                        <input className="input-text" onChange={(event) => updateRow(row.id, { note: event.target.value })} type="text" value={row.note} />
+                      </td>
+                      <td>
+                        <div className="table-actions">
+                          <button className="button button--primary" onClick={() => applyRowToCalculator(row)} type="button">
+                            帶入試算
+                          </button>
+                          <button className="button button--ghost" onClick={() => removeRow(row.id)} type="button">
+                            刪除
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>市場板試算</h2>
-          <p>把工作表中的價格帶進來後，可以快速估算稅額、淨收入、成本與利潤。</p>
+          <h2>手動新增一筆</h2>
+          <p>當 OCR 不可靠或你想先規劃清單時，可以直接手動新增價格資料。</p>
         </div>
-
-        {selectedCalculatorRow ? (
-          <div className="callout">
-            <span className="callout-title">目前帶入資料</span>
-            <span className="callout-body">
-              {selectedCalculatorRow.itemName} | 數量 {selectedCalculatorRow.quantity} | 最近帶入時間{' '}
-              {formatShortDateTime(lastUpdatedAt ?? undefined)}
-            </span>
-          </div>
-        ) : null}
-
         <div className="field-grid">
           <label className="field">
-            <span className="field-label">售價</span>
-            <input
-              className="input-text"
-              min="0"
-              onChange={(event) => setListingPrice(Number(event.target.value))}
-              step="1"
-              type="number"
-              value={listingPrice}
-            />
+            <span className="field-label">道具名稱</span>
+            <input className="input-text" onChange={(event) => setDraftRow((current) => ({ ...current, itemName: event.target.value }))} type="text" value={draftRow.itemName} />
+          </label>
+          <label className="field">
+            <span className="field-label">陸行鳥價格</span>
+            <input className="input-text" min="0" onChange={(event) => setDraftRow((current) => ({ ...current, chocoboPrice: Number(event.target.value) }))} step="1" type="number" value={draftRow.chocoboPrice} />
+          </label>
+          <label className="field">
+            <span className="field-label">莫古力價格</span>
+            <input className="input-text" min="0" onChange={(event) => setDraftRow((current) => ({ ...current, mooglePrice: Number(event.target.value) }))} step="1" type="number" value={draftRow.mooglePrice} />
           </label>
           <label className="field">
             <span className="field-label">數量</span>
-            <input
-              className="input-text"
-              min="1"
-              onChange={(event) => setQuantity(Number(event.target.value))}
-              step="1"
-              type="number"
-              value={quantity}
-            />
+            <input className="input-text" min="1" onChange={(event) => setDraftRow((current) => ({ ...current, quantity: Number(event.target.value) }))} step="1" type="number" value={draftRow.quantity} />
+          </label>
+        </div>
+        <div className="button-row">
+          <button className="button button--primary" onClick={addDraftRow} type="button">
+            新增到工作表
+          </button>
+        </div>
+      </section>
+
+      <section className="page-card">
+        <div className="section-heading">
+          <h2>市場板試算</h2>
+          <p>把一筆比價結果帶進來後，可以繼續計算總價、稅額、淨收入、成本與損益。</p>
+        </div>
+        {selectedCalculatorRow ? (
+          <div className="callout">
+            <span className="callout-title">目前套用道具</span>
+            <span className="callout-body">
+              {selectedCalculatorRow.itemName} | 數量 {selectedCalculatorRow.quantity}
+            </span>
+          </div>
+        ) : null}
+        <div className="field-grid">
+          <label className="field">
+            <span className="field-label">售價</span>
+            <input className="input-text" min="0" onChange={(event) => setListingPrice(Number(event.target.value))} step="1" type="number" value={listingPrice} />
+          </label>
+          <label className="field">
+            <span className="field-label">數量</span>
+            <input className="input-text" min="1" onChange={(event) => setQuantity(Number(event.target.value))} step="1" type="number" value={quantity} />
           </label>
           <label className="field">
             <span className="field-label">稅率 (%)</span>
-            <input
-              className="input-text"
-              min="0"
-              onChange={(event) => setTaxRatePercent(Number(event.target.value))}
-              step="0.1"
-              type="number"
-              value={taxRatePercent}
-            />
+            <input className="input-text" min="0" onChange={(event) => setTaxRatePercent(Number(event.target.value))} step="0.1" type="number" value={taxRatePercent} />
           </label>
           <label className="field">
             <span className="field-label">單位成本</span>
-            <input
-              className="input-text"
-              min="0"
-              onChange={(event) => setUnitCost(Number(event.target.value))}
-              step="1"
-              type="number"
-              value={unitCost}
-            />
+            <input className="input-text" min="0" onChange={(event) => setUnitCost(Number(event.target.value))} step="1" type="number" value={unitCost} />
           </label>
         </div>
-
         <div className="stats-grid">
           <article className="stat-card">
             <div className="stat-label">總售價</div>
-            <div className="stat-value">{formatNumber(marketSummary.grossTotal)} gil</div>
+            <div className="stat-value">{formatGil(marketSummary.grossTotal)}</div>
           </article>
           <article className="stat-card">
             <div className="stat-label">稅額</div>
-            <div className="stat-value">{formatNumber(marketSummary.taxAmount)} gil</div>
+            <div className="stat-value">{formatGil(marketSummary.taxAmount)}</div>
           </article>
           <article className="stat-card">
             <div className="stat-label">淨收入</div>
-            <div className="stat-value">{formatNumber(marketSummary.netTotal)} gil</div>
+            <div className="stat-value">{formatGil(marketSummary.netTotal)}</div>
           </article>
           <article className="stat-card">
             <div className="stat-label">總成本</div>
-            <div className="stat-value">{formatNumber(marketSummary.totalCost)} gil</div>
+            <div className="stat-value">{formatGil(marketSummary.totalCost)}</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">利潤</div>
-            <div className="stat-value">{formatNumber(marketSummary.profit)} gil</div>
+            <div className="stat-label">損益</div>
+            <div className="stat-value">{formatGil(marketSummary.profit)}</div>
           </article>
           <article className="stat-card">
-            <div className="stat-label">損益平衡單價</div>
-            <div className="stat-value">{formatNumber(marketSummary.breakEvenPerUnit)} gil</div>
+            <div className="stat-label">損平單價</div>
+            <div className="stat-value">{formatGil(marketSummary.breakEvenPerUnit)}</div>
           </article>
         </div>
       </section>

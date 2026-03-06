@@ -23,10 +23,7 @@ export function buildRouteItem(pointId: string): TreasurePartyRouteItem {
   }
 }
 
-export function addPointToRoute(
-  route: TreasurePartyRouteItem[],
-  pointId: string,
-): TreasurePartyRouteItem[] {
+export function addPointToRoute(route: TreasurePartyRouteItem[], pointId: string): TreasurePartyRouteItem[] {
   if (route.some((entry) => entry.pointId === pointId)) {
     return route
   }
@@ -34,11 +31,7 @@ export function addPointToRoute(
   return [...route, buildRouteItem(pointId)]
 }
 
-function buildSortKey(
-  point: TreasurePoint,
-  map: TreasureMapInfo | undefined,
-  allPoints: TreasurePoint[],
-): string {
+function buildSortKey(point: TreasurePoint, map: TreasureMapInfo | undefined, allPoints: TreasurePoint[]): string {
   const indexOnMap = allPoints
     .filter((entry) => entry.mapId === point.mapId)
     .sort((left, right) => left.id.localeCompare(right.id))
@@ -78,11 +71,11 @@ export function buildPartyMessage(
 ): string {
   const nearestAetheryte = findNearestAetheryte(map.zoneId, point, aetherytes)
   const playerPrefix = playerName.trim() ? `${playerName.trim()} ` : ''
-  const baseMessage = `/p ${playerPrefix}[${map.label}] (${point.x.toFixed(1)}, ${point.y.toFixed(1)})`
+  const baseMessage = `/p ${playerPrefix}[${map.label}] X:${point.x.toFixed(1)} Y:${point.y.toFixed(1)}`
 
   if (!nearestAetheryte) {
     return baseMessage
   }
 
-  return `${baseMessage} | 最近傳送水晶：[${nearestAetheryte.name}]`
+  return `${baseMessage} | 最近以太之光：${nearestAetheryte.name}`
 }

@@ -37,14 +37,14 @@ function LabPage() {
     <div className="page-grid">
       <section className="page-card">
         <div className="section-heading">
-          <h2>Data Explorer</h2>
-          <p>這裡保留原型性質的資料搜尋區。正式查價、金碟與藏寶圖功能已移到各自的正式頁面。</p>
+          <h2>資料實驗室</h2>
+          <p>這裡保留站內尚未正式產品化的資料搜尋與驗證工具。</p>
         </div>
 
         <form className="page-grid" onSubmit={(event) => void handleSearch(event)}>
           <div className="field-grid">
             <label className="field">
-              <span className="field-label">Sheet</span>
+              <span className="field-label">資料表</span>
               <select
                 className="input-select"
                 onChange={(event) => setSheet(event.target.value as XivapiSheet)}
@@ -59,11 +59,11 @@ function LabPage() {
             </label>
 
             <label className="field">
-              <span className="field-label">Search term</span>
+              <span className="field-label">搜尋關鍵字</span>
               <input
                 className="input-text"
                 onChange={(event) => setTerm(event.target.value)}
-                placeholder="e.g. Rainbow Drip"
+                placeholder="例如 Rainbow Drip"
                 type="text"
                 value={term}
               />
@@ -72,7 +72,7 @@ function LabPage() {
 
           <div className="button-row">
             <button className="button button--primary" disabled={loading} type="submit">
-              {loading ? 'Searching...' : 'Search XIVAPI'}
+              {loading ? '搜尋中' : '搜尋 XIVAPI'}
             </button>
             <a
               className="button button--ghost"
@@ -80,14 +80,14 @@ function LabPage() {
               rel="noreferrer"
               target="_blank"
             >
-              Search Docs
+              查看 Search 文件
             </a>
           </div>
         </form>
 
         {searchError && (
           <div className="callout callout--error">
-            <span className="callout-title">Search Error</span>
+            <span className="callout-title">搜尋失敗</span>
             <span className="callout-body">{searchError}</span>
           </div>
         )}
@@ -109,7 +109,7 @@ function LabPage() {
                   rel="noreferrer"
                   target="_blank"
                 >
-                  Open similar API query
+                  開啟相似 API 查詢
                 </a>
               </article>
             ))}
@@ -118,26 +118,26 @@ function LabPage() {
 
         {!loading && !searchError && term.trim().length >= 2 && results.length === 0 && (
           <div className="empty-state">
-            <strong>No results</strong>
-            <p>Try another sheet or a broader search term.</p>
+            <strong>沒有結果</strong>
+            <p>請嘗試更寬鬆的關鍵字或切換資料表。</p>
           </div>
         )}
       </section>
 
       <section className="page-card">
         <div className="section-heading">
-          <h2>正式工具入口</h2>
-          <p>這裡保留給之後測試中的小功能；常用功能請直接使用正式頁面。</p>
+          <h2>正式功能入口</h2>
+          <p>如果你要的是站內主要工具，請直接走正式頁面。</p>
         </div>
         <div className="button-row">
           <Link className="button button--primary" to="/market">
-            打開市場查價
+            查價頁
           </Link>
           <Link className="button button--ghost" to="/gold-saucer">
-            打開金碟頁
+            金碟頁
           </Link>
           <Link className="button button--ghost" to="/treasure">
-            打開藏寶圖頁
+            藏寶圖頁
           </Link>
         </div>
       </section>
