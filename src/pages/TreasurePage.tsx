@@ -9,61 +9,38 @@ import {
   type TreasurePartyRouteItem,
 } from '../treasure/party'
 import {
-  buildPartyRoomInviteUrl,
-  buildPartyRoomSnapshot,
-  clearPartyRoomInviteFromLocation,
-  createPartyRoomId,
-  readPartyRoomInviteFromLocation,
-  type TreasurePartyRoomSnapshot,
-} from '../treasure/partyRoom'
+  createRealtimeTreasureRoom,
+  getRealtimeTreasureCurrentUserId,
+  isRealtimeTreasureAvailable,
+  joinRealtimeTreasureRoom,
+  leaveRealtimeTreasureRoom,
+  subscribeRealtimeTreasureRoom,
+  updateRealtimeTreasureNickname,
+  updateRealtimeTreasureRoute,
+  type RealtimeTreasureRoomState,
+} from '../treasure/liveSync'
 import {
   getMapsForGrade,
   getPointsForSelection,
   loadTreasureReferenceData,
   type TreasureReferenceData,
 } from '../treasure/referenceData'
-import type { TreasureGradeInfo, TreasureMapInfo, TreasurePoint } from '../types'
+import type { RuntimeConfig, TreasureGradeInfo, TreasureMapInfo, TreasurePoint } from '../types'
 import { getErrorMessage } from '../utils/errors'
 
-const TREASURE_STORAGE_KEY = 'ff14-helper.treasure.finder.v3'
+const TREASURE_STORAGE_KEY = 'ff14-helper.treasure.finder.v4'
 
 type TreasureGroupMode = 'solo' | 'party'
-
-interface SavedPartyRoomState {
-  roomId: string
-  roomName: string
-  ownerName: string
-}
 
 interface SavedTreasureFinderState {
   groupMode: TreasureGroupMode
   gradeId: string
   mapId: number
   pointId: string
-  partyMembers: string[]
+  localMembers: string[]
   partyRoutes: Record<string, TreasurePartyRouteItem[]>
-  partyRoom: SavedPartyRoomState
-}
-
-function getDefaultPartyRoomState(): SavedPartyRoomState {
-  return {
-    roomId: '',
-    roomName: '',
-    ownerName: '',
-  }
-}
-
-function padPartyMembers(members: string[]): string[] {
-  const normalizedMembers = members
-    .map((entry) => entry.trim())
-    .filter((entry, index, array) => Boolean(entry) && array.indexOf(entry) === index)
-    .slice(0, 8)
-
-  while (normalizedMembers.length < 8) {
-    normalizedMembers.push('')
-  }
-
-  return normalizedMembers
+  realtimeNickname: string
+  lastRoomCode: string
 }
 
 function getDefaultState(): SavedTreasureFinderState {
@@ -72,9 +49,10 @@ function getDefaultState(): SavedTreasureFinderState {
     gradeId: '',
     mapId: 0,
     pointId: '',
-    partyMembers: ['', '', '', '', '', '', '', ''],
+    localMembers: [],
     partyRoutes: {},
-    partyRoom: getDefaultPartyRoomState(),
+    realtimeNickname: '',
+    lastRoomCode: '',
   }
 }
 
@@ -97,22 +75,15 @@ function readSavedState(): SavedTreasureFinderState {
       gradeId: typeof parsed.gradeId === 'string' ? parsed.gradeId : '',
       mapId: typeof parsed.mapId === 'number' ? parsed.mapId : 0,
       pointId: typeof parsed.pointId === 'string' ? parsed.pointId : '',
-      partyMembers:
-        Array.isArray(parsed.partyMembers) && parsed.partyMembers.length === 8
-          ? parsed.partyMembers.map((entry) => (typeof entry === 'string' ? entry : ''))
-          : ['', '', '', '', '', '', '', ''],
+      localMembers: Array.isArray(parsed.localMembers)
+        ? parsed.localMembers.filter((entry): entry is string => typeof entry === 'string')
+        : [],
       partyRoutes:
         parsed.partyRoutes && typeof parsed.partyRoutes === 'object'
           ? parsed.partyRoutes
           : {},
-      partyRoom:
-        parsed.partyRoom &&
-        typeof parsed.partyRoom === 'object' &&
-        typeof parsed.partyRoom.roomId === 'string' &&
-        typeof parsed.partyRoom.roomName === 'string' &&
-        typeof parsed.partyRoom.ownerName === 'string'
-          ? parsed.partyRoom
-          : getDefaultPartyRoomState(),
+      realtimeNickname: typeof parsed.realtimeNickname === 'string' ? parsed.realtimeNickname : '',
+      lastRoomCode: typeof parsed.lastRoomCode === 'string' ? parsed.lastRoomCode : '',
     }
   } catch {
     return getDefaultState()
@@ -137,7 +108,19 @@ function getMapPointLabel(points: TreasurePoint[], pointId: string): string {
   return index === -1 ? '-' : `#${index + 1}`
 }
 
-function TreasurePage() {
+function parseMembersInput(value: string): string[] {
+  return value
+    .split(/[,\n]/gu)
+    .map((entry) => entry.trim())
+    .filter((entry, index, array) => Boolean(entry) && array.indexOf(entry) === index)
+    .slice(0, 8)
+}
+
+interface TreasurePageProps {
+  config: RuntimeConfig
+}
+
+function TreasurePage({ config }: TreasurePageProps) {
   const [savedState] = useState(() => readSavedState())
   const [referenceData, setReferenceData] = useState<TreasureReferenceData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -146,16 +129,19 @@ function TreasurePage() {
   const [gradeId, setGradeId] = useState(savedState.gradeId)
   const [mapId, setMapId] = useState(savedState.mapId)
   const [pointId, setPointId] = useState(savedState.pointId)
-  const [partyMembers, setPartyMembers] = useState<string[]>(savedState.partyMembers)
   const [partyRoutes, setPartyRoutes] = useState<Record<string, TreasurePartyRouteItem[]>>(
     savedState.partyRoutes,
   )
-  const [partyRoom, setPartyRoom] = useState<SavedPartyRoomState>(savedState.partyRoom)
-  const [incomingInvite, setIncomingInvite] = useState<TreasurePartyRoomSnapshot | null>(() =>
-    readPartyRoomInviteFromLocation(),
-  )
-  const [joinName, setJoinName] = useState('')
-  const [generatedInviteUrl, setGeneratedInviteUrl] = useState('')
+  const [membersInput, setMembersInput] = useState(savedState.localMembers.join(', '))
+  const [realtimeNickname, setRealtimeNickname] = useState(savedState.realtimeNickname)
+  const [roomName, setRoomName] = useState('寶圖隊伍')
+  const [roomCodeInput, setRoomCodeInput] = useState(savedState.lastRoomCode)
+  const [activeRoomCode, setActiveRoomCode] = useState('')
+  const [liveRoomState, setLiveRoomState] = useState<RealtimeTreasureRoomState | null>(null)
+  const [liveUserId, setLiveUserId] = useState<string | null>(null)
+  const [liveBusy, setLiveBusy] = useState(false)
+  const [liveError, setLiveError] = useState<string | null>(null)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null)
 
   useEffect(() => {
@@ -182,6 +168,8 @@ function TreasurePage() {
       cancelled = true
     }
   }, [])
+
+  const realtimeEnabled = isRealtimeTreasureAvailable(config)
 
   const visibleGrades = useMemo(() => {
     if (!referenceData) {
@@ -254,47 +242,11 @@ function TreasurePage() {
     [referenceData?.maps],
   )
 
-  const normalizedPartyMembers = useMemo(
-    () => partyMembers.map((name) => name.trim()).filter(Boolean),
-    [partyMembers],
+  const localMembers = useMemo(() => parseMembersInput(membersInput), [membersInput])
+  const currentMemberOptions = useMemo(
+    () => (liveRoomState ? liveRoomState.members.map((member) => member.nickname) : localMembers),
+    [liveRoomState, localMembers],
   )
-
-  function replaceCurrentGradeRoute(nextRoute: TreasurePartyRouteItem[]): void {
-    if (!activeGrade) {
-      return
-    }
-
-    setPartyRoutes((current) => ({
-      ...current,
-      [activeGrade.id]: nextRoute,
-    }))
-  }
-
-  async function handleCopy(label: string, text: string): Promise<void> {
-    const copied = await copyText(text)
-
-    if (!copied) {
-      return
-    }
-
-    setCopiedLabel(label)
-
-    window.setTimeout(() => {
-      setCopiedLabel((current) => (current === label ? null : current))
-    }, 1600)
-  }
-
-  function resolveCurrentPartyRoom(): SavedPartyRoomState {
-    const nextRoom = {
-      roomId: partyRoom.roomId || createPartyRoomId(),
-      roomName: partyRoom.roomName.trim() || `${activeGrade?.label ?? '8 人'} 寶圖隊伍`,
-      ownerName: partyRoom.ownerName.trim() || normalizedPartyMembers[0] || '隊長',
-    }
-
-    setPartyRoom(nextRoom)
-
-    return nextRoom
-  }
 
   useEffect(() => {
     if (typeof window === 'undefined' || !activeGrade || !activeMap || !activePoint) {
@@ -308,102 +260,226 @@ function TreasurePage() {
         gradeId: activeGrade.id,
         mapId: activeMap.id,
         pointId: activePoint.id,
-        partyMembers,
+        localMembers,
         partyRoutes,
-        partyRoom,
+        realtimeNickname,
+        lastRoomCode: activeRoomCode || roomCodeInput,
       }),
     )
-  }, [activeGrade, activeMap, activePoint, groupMode, partyMembers, partyRoom, partyRoutes])
+  }, [
+    activeGrade,
+    activeMap,
+    activePoint,
+    activeRoomCode,
+    groupMode,
+    localMembers,
+    partyRoutes,
+    realtimeNickname,
+    roomCodeInput,
+  ])
 
-  async function handleCopyInviteLink(): Promise<void> {
-    if (!activeGrade || activeGrade.partySize !== 8) {
+  useEffect(() => {
+    if (!realtimeEnabled || !activeRoomCode) {
       return
     }
 
-    const currentRoom = resolveCurrentPartyRoom()
-    const snapshot = buildPartyRoomSnapshot({
-      roomId: currentRoom.roomId,
-      roomName: currentRoom.roomName,
-      ownerName: currentRoom.ownerName,
-      gradeId: activeGrade.id,
-      members: partyMembers,
-      route: activeRoute,
-    })
-    const inviteUrl = buildPartyRoomInviteUrl(snapshot)
+    let unsubscribe: (() => void) | null = null
+    let cancelled = false
 
-    setGeneratedInviteUrl(inviteUrl)
-    await handleCopy('room-link', inviteUrl)
+    subscribeRealtimeTreasureRoom(
+      config,
+      activeRoomCode,
+      (state) => {
+        if (cancelled) {
+          return
+        }
+
+        if (!state) {
+          setLiveRoomState(null)
+          setActiveRoomCode('')
+          setLiveError('這個即時隊伍房間已不存在，可能已解散')
+          return
+        }
+
+        setLiveRoomState(state)
+        setPartyRoutes((current) => ({
+          ...current,
+          [state.gradeId]: state.route,
+        }))
+
+        if (referenceData) {
+          const syncedGrade = referenceData.grades.find((grade) => grade.id === state.gradeId) ?? null
+
+          if (syncedGrade) {
+            const nextMaps = getMapsForGrade(referenceData, syncedGrade.id)
+            const nextMap = nextMaps.find((entry) => entry.id === mapId) ?? nextMaps[0]
+            const nextPoints = nextMap ? getPointsForSelection(referenceData, syncedGrade.id, nextMap.id) : []
+            const nextPoint = nextPoints.find((entry) => entry.id === pointId) ?? nextPoints[0]
+
+            setGroupMode('party')
+            setGradeId(syncedGrade.id)
+
+            if (nextMap) {
+              setMapId(nextMap.id)
+            }
+
+            if (nextPoint) {
+              setPointId(nextPoint.id)
+            }
+          }
+        }
+      },
+      (error) => {
+        if (!cancelled) {
+          setLiveError(getErrorMessage(error))
+        }
+      },
+    ).then((nextUnsubscribe) => {
+      if (cancelled) {
+        nextUnsubscribe()
+        return
+      }
+
+      unsubscribe = nextUnsubscribe
+    })
+
+    return () => {
+      cancelled = true
+
+      if (unsubscribe) {
+        unsubscribe()
+      }
+    }
+  }, [activeRoomCode, config, mapId, pointId, realtimeEnabled, referenceData])
+
+  async function handleCopy(label: string, text: string): Promise<void> {
+    const copied = await copyText(text)
+
+    if (!copied) {
+      return
+    }
+
+    setCopiedLabel(label)
+    window.setTimeout(() => {
+      setCopiedLabel((current) => (current === label ? null : current))
+    }, 1600)
   }
 
-  function applyIncomingInvite(includeJoinName: boolean): void {
-    if (!incomingInvite || !referenceData) {
+  function replaceCurrentGradeRoute(nextRoute: TreasurePartyRouteItem[]): void {
+    if (!activeGrade) {
       return
     }
 
-    const nextGrade =
-      referenceData.grades.find(
-        (grade) => grade.id === incomingInvite.gradeId && grade.partySize === 8,
-      ) ?? referenceData.grades.find((grade) => grade.partySize === 8)
-
-    if (!nextGrade) {
-      return
-    }
-
-    const nextMaps = getMapsForGrade(referenceData, nextGrade.id)
-
-    if (nextMaps.length === 0) {
-      return
-    }
-
-    const validPointIds = new Set(
-      referenceData.points
-        .filter((point) => point.itemId === nextGrade.itemId || point.gradeId === nextGrade.id)
-        .map((point) => point.id),
-    )
-    const importedRoute = incomingInvite.route.filter((entry) => validPointIds.has(entry.pointId))
-    const routeFirstPoint =
-      importedRoute.length > 0
-        ? referenceData.points.find((point) => point.id === importedRoute[0].pointId) ?? null
-        : null
-    const nextMap =
-      (routeFirstPoint ? nextMaps.find((map) => map.id === routeFirstPoint.mapId) : null) ?? nextMaps[0]
-    const nextPoints = getPointsForSelection(referenceData, nextGrade.id, nextMap.id)
-    const nextPoint =
-      (routeFirstPoint ? nextPoints.find((point) => point.id === routeFirstPoint.id) : null) ?? nextPoints[0]
-
-    if (!nextPoint) {
-      return
-    }
-
-    const mergedMembers = [...incomingInvite.members]
-    const requestedJoinName = joinName.trim()
-
-    if (
-      includeJoinName &&
-      requestedJoinName &&
-      !mergedMembers.includes(requestedJoinName) &&
-      mergedMembers.length < 8
-    ) {
-      mergedMembers.push(requestedJoinName)
-    }
-
-    setGroupMode('party')
-    setGradeId(nextGrade.id)
-    setMapId(nextMap.id)
-    setPointId(nextPoint.id)
-    setPartyMembers(padPartyMembers(mergedMembers))
     setPartyRoutes((current) => ({
       ...current,
-      [nextGrade.id]: importedRoute,
+      [activeGrade.id]: nextRoute,
     }))
-    setPartyRoom({
-      roomId: incomingInvite.roomId,
-      roomName: incomingInvite.roomName,
-      ownerName: incomingInvite.ownerName,
-    })
-    setGeneratedInviteUrl('')
-    setIncomingInvite(null)
-    clearPartyRoomInviteFromLocation()
+  }
+
+  async function commitRoute(nextRoute: TreasurePartyRouteItem[], nextMessage: string): Promise<void> {
+    if (!activeGrade) {
+      return
+    }
+
+    replaceCurrentGradeRoute(nextRoute)
+    setStatusMessage(nextMessage)
+
+    if (activeRoomCode) {
+      try {
+        await updateRealtimeTreasureRoute(config, activeRoomCode, nextRoute)
+      } catch (error) {
+        setLiveError(getErrorMessage(error))
+      }
+    }
+  }
+
+  async function handleCreateRoom(): Promise<void> {
+    if (!realtimeEnabled || !activeGrade || activeGrade.partySize !== 8) {
+      return
+    }
+
+    setLiveBusy(true)
+    setLiveError(null)
+
+    try {
+      const nickname = realtimeNickname.trim() || '隊長'
+      const result = await createRealtimeTreasureRoom({
+        config,
+        gradeId: activeGrade.id,
+        roomName,
+        nickname,
+        initialRoute: activeRoute,
+      })
+      const userId = await getRealtimeTreasureCurrentUserId(config)
+
+      setLiveUserId(userId)
+      setActiveRoomCode(result.roomCode)
+      setRoomCodeInput(result.roomCode)
+      setStatusMessage(`已建立即時隊伍房間 ${result.roomCode}`)
+    } catch (error) {
+      setLiveError(getErrorMessage(error))
+    } finally {
+      setLiveBusy(false)
+    }
+  }
+
+  async function handleJoinRoom(): Promise<void> {
+    if (!realtimeEnabled) {
+      return
+    }
+
+    setLiveBusy(true)
+    setLiveError(null)
+
+    try {
+      const result = await joinRealtimeTreasureRoom({
+        config,
+        roomCode: roomCodeInput,
+        nickname: realtimeNickname.trim() || '隊員',
+      })
+      const userId = await getRealtimeTreasureCurrentUserId(config)
+
+      setLiveUserId(userId)
+      setActiveRoomCode(result.roomCode)
+      setStatusMessage(`已加入即時隊伍房間 ${result.roomCode}`)
+    } catch (error) {
+      setLiveError(getErrorMessage(error))
+    } finally {
+      setLiveBusy(false)
+    }
+  }
+
+  async function handleLeaveRoom(): Promise<void> {
+    if (!activeRoomCode) {
+      return
+    }
+
+    setLiveBusy(true)
+    setLiveError(null)
+
+    try {
+      await leaveRealtimeTreasureRoom(config, activeRoomCode)
+      setActiveRoomCode('')
+      setLiveRoomState(null)
+      setStatusMessage('已離開即時隊伍房間')
+    } catch (error) {
+      setLiveError(getErrorMessage(error))
+    } finally {
+      setLiveBusy(false)
+    }
+  }
+
+  async function handleUpdateNickname(): Promise<void> {
+    if (!activeRoomCode) {
+      return
+    }
+
+    try {
+      await updateRealtimeTreasureNickname(config, activeRoomCode, realtimeNickname)
+      setStatusMessage('已更新你的隊伍暱稱')
+    } catch (error) {
+      setLiveError(getErrorMessage(error))
+    }
   }
 
   if (loading) {
@@ -412,7 +488,7 @@ function TreasurePage() {
         <section className="page-card">
           <div className="section-heading">
             <h2>藏寶圖資料載入中</h2>
-            <p>正在整理地圖、點位與可用的組隊規劃資料。</p>
+            <p>正在整理寶圖等級、地圖與可用點位。</p>
           </div>
         </section>
       </div>
@@ -436,101 +512,34 @@ function TreasurePage() {
     <div className="page-grid">
       <section className="hero-card">
         <p className="eyebrow">藏寶圖</p>
-        <h2>藏寶圖座標與組隊輔助</h2>
+        <h2>藏寶圖座標與隊伍同步</h2>
         <p className="lead">
-          本頁參考 <code>xiv-tc-treasure-finder</code> 的操作方向，整理公開可用的寶圖點位、
-          地圖切換與隊伍規劃。本站改用前端分享連結同步，不把隊伍資料存到本站伺服器。
+          本頁參考 xiv-tc-treasure-finder 的寶圖與組隊方向，整合公開點位、地圖切換、離線規劃與
+          Firebase 即時隊伍同步。若未設定 Firebase，仍可使用本機離線規劃。
         </p>
         <div className="badge-row">
           <span className="badge badge--positive">
             {referenceData.loadedFrom === 'remote'
-              ? '已載入最新公開資料'
+              ? '已載入最新公開寶圖資料'
               : referenceData.loadedFrom === 'cache'
                 ? '使用本機快取資料'
                 : '使用內建備援資料'}
           </span>
-          <span className="badge">單人與 8 人分流</span>
-          <span className="badge badge--warning">隊伍分享為連結快照，非即時同步</span>
+          <span className="badge">{realtimeEnabled ? '支援即時同步' : '目前為離線模式'}</span>
+          <span className="badge badge--warning">8 人寶圖才會顯示隊伍同步</span>
         </div>
       </section>
-
-      {incomingInvite ? (
-        <section className="page-card">
-          <div className="section-heading">
-            <h2>收到隊伍邀請</h2>
-            <p>你開啟了一個寶圖隊伍邀請連結，可以先檢查內容，再決定是否載入並加入。</p>
-          </div>
-
-          <div className="stats-grid">
-            <article className="stat-card">
-              <div className="stat-label">房號</div>
-              <div className="stat-value">{incomingInvite.roomId}</div>
-            </article>
-            <article className="stat-card">
-              <div className="stat-label">隊伍名稱</div>
-              <div className="stat-value">{incomingInvite.roomName}</div>
-            </article>
-            <article className="stat-card">
-              <div className="stat-label">建立者</div>
-              <div className="stat-value">{incomingInvite.ownerName}</div>
-            </article>
-            <article className="stat-card">
-              <div className="stat-label">已登記成員</div>
-              <div className="stat-value">{incomingInvite.members.length} / 8</div>
-            </article>
-          </div>
-
-          <div className="field-grid">
-            <label className="field">
-              <span className="field-label">加入時顯示名稱</span>
-              <input
-                className="input-text"
-                onChange={(event) => setJoinName(event.target.value)}
-                placeholder="例如：角色名或常用暱稱"
-                type="text"
-                value={joinName}
-              />
-            </label>
-          </div>
-
-          <div className="button-row">
-            <button
-              className="button button--primary"
-              onClick={() => applyIncomingInvite(true)}
-              type="button"
-            >
-              載入並加入這個隊伍
-            </button>
-            <button
-              className="button button--ghost"
-              onClick={() => applyIncomingInvite(false)}
-              type="button"
-            >
-              只載入隊伍資料
-            </button>
-            <button
-              className="button button--ghost"
-              onClick={() => {
-                setIncomingInvite(null)
-                clearPartyRoomInviteFromLocation()
-              }}
-              type="button"
-            >
-              忽略這次邀請
-            </button>
-          </div>
-        </section>
-      ) : null}
 
       <section className="page-card">
         <div className="section-heading">
           <h2>模式與寶圖等級</h2>
-          <p>8 人寶圖才會顯示建房與入隊功能。單人寶圖只保留點位查找與座標複製。</p>
+          <p>單人與 8 人寶圖分開。若你正在即時隊伍中，會鎖定為該隊伍的 8 人寶圖等級。</p>
         </div>
 
         <div className="choice-row">
           <button
             className={groupMode === 'party' ? 'choice-button choice-button--active' : 'choice-button'}
+            disabled={Boolean(activeRoomCode)}
             onClick={() => setGroupMode('party')}
             type="button"
           >
@@ -538,6 +547,7 @@ function TreasurePage() {
           </button>
           <button
             className={groupMode === 'solo' ? 'choice-button choice-button--active' : 'choice-button'}
+            disabled={Boolean(activeRoomCode)}
             onClick={() => setGroupMode('solo')}
             type="button"
           >
@@ -546,31 +556,36 @@ function TreasurePage() {
         </div>
 
         <div className="choice-row" role="tablist" aria-label="Treasure grades">
-          {visibleGrades.map((grade) => (
-            <button
-              key={grade.id}
-              className={
-                grade.id === activeGrade.id ? 'choice-button choice-button--active' : 'choice-button'
-              }
-              onClick={() => {
-                const nextMaps = getMapsForGrade(referenceData, grade.id)
-                const nextMap = nextMaps[0]
-                const nextPoints = nextMap ? getPointsForSelection(referenceData, grade.id, nextMap.id) : []
-                const nextPoint = nextPoints[0]
+          {visibleGrades.map((grade) => {
+            const disabled = Boolean(activeRoomCode) && grade.id !== activeGrade.id
 
-                if (!nextMap || !nextPoint) {
-                  return
+            return (
+              <button
+                key={grade.id}
+                className={
+                  grade.id === activeGrade.id ? 'choice-button choice-button--active' : 'choice-button'
                 }
+                disabled={disabled}
+                onClick={() => {
+                  const nextMaps = getMapsForGrade(referenceData, grade.id)
+                  const nextMap = nextMaps[0]
+                  const nextPoints = nextMap ? getPointsForSelection(referenceData, grade.id, nextMap.id) : []
+                  const nextPoint = nextPoints[0]
 
-                setGradeId(grade.id)
-                setMapId(nextMap.id)
-                setPointId(nextPoint.id)
-              }}
-              type="button"
-            >
-              {grade.label} | {grade.itemName}
-            </button>
-          ))}
+                  if (!nextMap || !nextPoint) {
+                    return
+                  }
+
+                  setGradeId(grade.id)
+                  setMapId(nextMap.id)
+                  setPointId(nextPoint.id)
+                }}
+                type="button"
+              >
+                {grade.label} | {grade.itemName}
+              </button>
+            )
+          })}
         </div>
 
         <div className="choice-row" role="tablist" aria-label="Treasure maps">
@@ -596,10 +611,158 @@ function TreasurePage() {
         </div>
       </section>
 
+      {activeGrade.partySize === 8 ? (
+        <section className="page-card">
+          <div className="section-heading">
+            <h2>隊伍同步面板</h2>
+            <p>這裡把建立房間、加入房間與目前成員集中在一起，減少切換視線。</p>
+          </div>
+
+          {realtimeEnabled ? (
+            <>
+              <div className="field-grid">
+                <label className="field">
+                  <span className="field-label">你的顯示名稱</span>
+                  <input
+                    className="input-text"
+                    onBlur={() => void handleUpdateNickname()}
+                    onChange={(event) => setRealtimeNickname(event.target.value)}
+                    placeholder="例如：角色名"
+                    type="text"
+                    value={realtimeNickname}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">房間名稱</span>
+                  <input
+                    className="input-text"
+                    onChange={(event) => setRoomName(event.target.value)}
+                    placeholder="例如：今晚 G17"
+                    type="text"
+                    value={roomName}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">房號</span>
+                  <input
+                    className="input-text"
+                    onChange={(event) => setRoomCodeInput(event.target.value.toUpperCase())}
+                    placeholder="輸入 8 碼房號"
+                    type="text"
+                    value={roomCodeInput}
+                  />
+                </label>
+              </div>
+
+              <div className="button-row">
+                <button
+                  className="button button--primary"
+                  disabled={liveBusy || Boolean(activeRoomCode)}
+                  onClick={() => void handleCreateRoom()}
+                  type="button"
+                >
+                  建立即時隊伍
+                </button>
+                <button
+                  className="button button--ghost"
+                  disabled={liveBusy || Boolean(activeRoomCode)}
+                  onClick={() => void handleJoinRoom()}
+                  type="button"
+                >
+                  加入房間
+                </button>
+                <button
+                  className="button button--ghost"
+                  disabled={liveBusy || !activeRoomCode}
+                  onClick={() => void handleLeaveRoom()}
+                  type="button"
+                >
+                  離開房間
+                </button>
+                <button
+                  className="button button--ghost"
+                  disabled={!activeRoomCode}
+                  onClick={() => void handleCopy('room-code', activeRoomCode)}
+                  type="button"
+                >
+                  {copiedLabel === 'room-code' ? '已複製房號' : '複製房號'}
+                </button>
+              </div>
+
+              <div className="stats-grid">
+                <article className="stat-card">
+                  <div className="stat-label">同步狀態</div>
+                  <div className="stat-value">{activeRoomCode ? '已連線' : '尚未連線'}</div>
+                </article>
+                <article className="stat-card">
+                  <div className="stat-label">目前房號</div>
+                  <div className="stat-value">{activeRoomCode || '尚未加入'}</div>
+                </article>
+                <article className="stat-card">
+                  <div className="stat-label">隊伍名稱</div>
+                  <div className="stat-value">{liveRoomState?.roomName ?? roomName}</div>
+                </article>
+                <article className="stat-card">
+                  <div className="stat-label">最後同步</div>
+                  <div className="stat-value">{liveRoomState?.updatedAtLabel ?? '尚未同步'}</div>
+                </article>
+              </div>
+
+              <div className="callout">
+                <span className="callout-title">目前成員</span>
+                <span className="callout-body">
+                  {liveRoomState
+                    ? liveRoomState.members
+                        .map((member) =>
+                          member.userId === liveUserId ? `${member.nickname}（你）` : member.nickname,
+                        )
+                        .join('、') || '目前沒有成員資料'
+                    : '建立或加入房間後，這裡會顯示即時同步中的成員'}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="callout callout--error">
+              <span className="callout-title">尚未設定即時同步</span>
+              <span className="callout-body">
+                請在 <code>public/runtime-config.json</code> 補上 Firebase 公開設定後，才能啟用多人即時隊伍。
+              </span>
+            </div>
+          )}
+
+          {!activeRoomCode ? (
+            <label className="field">
+              <span className="field-label">離線隊員名單（用逗號分隔）</span>
+              <input
+                className="input-text"
+                onChange={(event) => setMembersInput(event.target.value)}
+                placeholder="例如：A、B、C、D"
+                type="text"
+                value={membersInput}
+              />
+            </label>
+          ) : null}
+
+          {liveError ? (
+            <div className="callout callout--error">
+              <span className="callout-title">同步訊息</span>
+              <span className="callout-body">{liveError}</span>
+            </div>
+          ) : null}
+
+          {statusMessage ? (
+            <div className="callout callout--success">
+              <span className="callout-title">狀態</span>
+              <span className="callout-body">{statusMessage}</span>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="page-card">
         <div className="section-heading">
           <h2>地圖與目前點位</h2>
-          <p>地圖影像來自公開資料來源，點位資料參考 cycleapple 的 treasure finder 並由本站重新整理。</p>
+          <p>點位資料來自公開來源。可直接點地圖切換目標點位，右側會顯示座標與最近傳送水晶。</p>
         </div>
 
         <div className="treasure-finder-layout">
@@ -666,7 +829,7 @@ function TreasurePage() {
                 })()}
               </span>
               <span className="muted">
-                座標複製使用純文字，不使用 <code>&lt;pos&gt;</code>，避免貼出你角色當前位置。
+                複製座標時只會輸出寶圖座標文字，不使用 <code>&lt;pos&gt;</code>。
               </span>
             </div>
           </div>
@@ -676,7 +839,7 @@ function TreasurePage() {
       <section className="page-card">
         <div className="section-heading">
           <h2>目前地圖的所有點位</h2>
-          <p>可直接切換高亮、複製座標，或在 8 人寶圖模式下加入組隊路線。</p>
+          <p>可切換高亮、複製純座標，或在 8 人模式下加入跑圖路線。</p>
         </div>
 
         <div className="treasure-card-grid">
@@ -696,9 +859,7 @@ function TreasurePage() {
                 <p className="treasure-card__meta">
                   座標：X {point.x.toFixed(1)} / Y {point.y.toFixed(1)}
                 </p>
-                <p className="treasure-card__meta">
-                  最近傳送：{nearest ? nearest.name : '沒有資料'}
-                </p>
+                <p className="treasure-card__meta">最近傳送：{nearest ? nearest.name : '沒有資料'}</p>
                 <div className="button-row">
                   <button className="button button--ghost" onClick={() => setPointId(point.id)} type="button">
                     切到這個點
@@ -718,10 +879,10 @@ function TreasurePage() {
                   {activeGrade.partySize === 8 ? (
                     <button
                       className="button button--primary"
-                      onClick={() => replaceCurrentGradeRoute(addPointToRoute(activeRoute, point.id))}
+                      onClick={() => void commitRoute(addPointToRoute(activeRoute, point.id), '已加入一個路線點位')}
                       type="button"
                     >
-                      加入組隊路線
+                      加入路線
                     </button>
                   ) : null}
                 </div>
@@ -732,332 +893,213 @@ function TreasurePage() {
       </section>
 
       {activeGrade.partySize === 8 ? (
-        <>
-          <section className="page-card">
-            <div className="section-heading">
-              <h2>隊伍房與邀請連結</h2>
-              <p>
-                參考 <code>xiv-tc-treasure-finder</code> 的組隊方向。原站使用外部即時同步服務，
-                本站改成不經本站伺服器的分享連結模式。
-              </p>
+        <section className="page-card">
+          <div className="section-heading">
+            <h2>路線清單</h2>
+            <p>用更精簡的方式集中分派、排序、完成標記與隊頻文字複製。</p>
+          </div>
+
+          <div className="button-row">
+            <button
+              className="button button--ghost"
+              onClick={() =>
+                void commitRoute(
+                  optimizePartyRoute(activeRoute, gradePoints, referenceData.maps),
+                  '已重新整理路線順序',
+                )
+              }
+              type="button"
+            >
+              自動排序
+            </button>
+            <button
+              className="button button--ghost"
+              onClick={() => void commitRoute(activeRoute.filter((entry) => !entry.completed), '已清除完成項目')}
+              type="button"
+            >
+              清除已完成
+            </button>
+            <button
+              className="button button--ghost"
+              onClick={() => void commitRoute([], '已清空路線')}
+              type="button"
+            >
+              清空路線
+            </button>
+          </div>
+
+          {activeRoute.length === 0 ? (
+            <div className="empty-state">
+              <strong>目前沒有任何路線</strong>
+              <p>先從上方點位卡片加入你們要跑的寶圖點位。</p>
             </div>
+          ) : (
+            <div className="route-list">
+              {activeRoute.map((routeEntry, index) => {
+                const point = pointById.get(routeEntry.pointId)
 
-            <div className="field-grid">
-              <label className="field">
-                <span className="field-label">隊伍名稱</span>
-                <input
-                  className="input-text"
-                  onChange={(event) =>
-                    setPartyRoom((current) => ({
-                      ...current,
-                      roomName: event.target.value,
-                    }))
-                  }
-                  placeholder={`${activeGrade.label} 寶圖隊伍`}
-                  type="text"
-                  value={partyRoom.roomName}
-                />
-              </label>
-              <label className="field">
-                <span className="field-label">建立者名稱</span>
-                <input
-                  className="input-text"
-                  onChange={(event) =>
-                    setPartyRoom((current) => ({
-                      ...current,
-                      ownerName: event.target.value,
-                    }))
-                  }
-                  placeholder="例如：團長名稱"
-                  type="text"
-                  value={partyRoom.ownerName}
-                />
-              </label>
-            </div>
+                if (!point) {
+                  return null
+                }
 
-            <div className="stats-grid">
-              <article className="stat-card">
-                <div className="stat-label">目前房號</div>
-                <div className="stat-value">{partyRoom.roomId || '尚未建立'}</div>
-              </article>
-              <article className="stat-card">
-                <div className="stat-label">目前成員</div>
-                <div className="stat-value">{normalizedPartyMembers.length} / 8</div>
-              </article>
-              <article className="stat-card">
-                <div className="stat-label">規劃點位</div>
-                <div className="stat-value">{activeRoute.length}</div>
-              </article>
-              <article className="stat-card">
-                <div className="stat-label">模式說明</div>
-                <div className="stat-value">分享連結快照</div>
-              </article>
-            </div>
+                const routeMap = mapById.get(point.mapId) ?? activeMap
+                const nearest = findNearestAetheryte(routeMap.zoneId, point, referenceData.aetherytes)
+                const routeMapPoints = gradePoints.filter((entry) => entry.mapId === routeMap.id)
 
-            <div className="button-row">
-              <button className="button button--primary" onClick={() => void handleCopyInviteLink()} type="button">
-                {partyRoom.roomId ? '更新並複製邀請連結' : '建立隊伍並複製邀請連結'}
-              </button>
-              <button
-                className="button button--ghost"
-                onClick={() => {
-                  setPartyRoom(getDefaultPartyRoomState())
-                  setGeneratedInviteUrl('')
-                }}
-                type="button"
-              >
-                重新建立新房間
-              </button>
-            </div>
+                return (
+                  <article
+                    key={routeEntry.id}
+                    className={routeEntry.completed ? 'treasure-card treasure-card--done' : 'treasure-card'}
+                  >
+                    <div className="history-item__top">
+                      <strong>
+                        路線 {index + 1} | {routeMap.label} {getMapPointLabel(routeMapPoints, point.id)}
+                      </strong>
+                      <span className="badge">{routeEntry.completed ? '已完成' : '進行中'}</span>
+                    </div>
 
-            {generatedInviteUrl ? (
-              <label className="field">
-                <span className="field-label">最近產生的邀請連結</span>
-                <textarea className="input-text" readOnly rows={3} value={generatedInviteUrl} />
-              </label>
-            ) : null}
+                    <p className="treasure-card__meta">
+                      座標：X {point.x.toFixed(1)} / Y {point.y.toFixed(1)}
+                    </p>
+                    <p className="treasure-card__meta">最近傳送：{nearest ? nearest.name : '沒有資料'}</p>
 
-            <div className="callout">
-              <span className="callout-title">使用方式</span>
-              <span className="callout-body">
-                建立者先複製邀請連結給隊友。隊友開啟後可帶名字加入，再把更新後的連結傳回來。
-                整個流程不走本站後端，因此不會有即時雙向同步。
-              </span>
-            </div>
-          </section>
-
-          <section className="page-card">
-            <div className="section-heading">
-              <h2>8 人隊伍名單</h2>
-              <p>可手動填寫 8 位成員，也可由邀請連結匯入。隊伍名單會保存在你自己的瀏覽器。</p>
-            </div>
-
-            <div className="party-member-grid">
-              {partyMembers.map((member, index) => (
-                <label key={`member-${index + 1}`} className="field">
-                  <span className="field-label">隊員 {index + 1}</span>
-                  <input
-                    className="input-text"
-                    onChange={(event) =>
-                      setPartyMembers((current) =>
-                        current.map((entry, memberIndex) =>
-                          memberIndex === index ? event.target.value : entry,
-                        ),
-                      )
-                    }
-                    placeholder={`隊員 ${index + 1}`}
-                    type="text"
-                    value={member}
-                  />
-                </label>
-              ))}
-            </div>
-
-            <div className="button-row">
-              <button
-                className="button button--ghost"
-                onClick={() => replaceCurrentGradeRoute(optimizePartyRoute(activeRoute, gradePoints, referenceData.maps))}
-                type="button"
-              >
-                自動整理路線順序
-              </button>
-              <button
-                className="button button--ghost"
-                onClick={() => replaceCurrentGradeRoute(activeRoute.filter((entry) => !entry.completed))}
-                type="button"
-              >
-                移除已完成項目
-              </button>
-              <button className="button button--ghost" onClick={() => replaceCurrentGradeRoute([])} type="button">
-                清空目前路線
-              </button>
-            </div>
-          </section>
-
-          <section className="page-card">
-            <div className="section-heading">
-              <h2>組隊路線清單</h2>
-              <p>這裡可以分配隊員、加註備註、調整順序，並複製可貼進隊頻的座標文字。</p>
-            </div>
-
-            {activeRoute.length === 0 ? (
-              <div className="empty-state">
-                <strong>目前還沒有加入任何點位</strong>
-                <p>先從上方點位卡片把要跑的寶圖加入組隊路線，這裡才會出現清單。</p>
-              </div>
-            ) : (
-              <div className="route-list">
-                {activeRoute.map((routeEntry, index) => {
-                  const point = pointById.get(routeEntry.pointId)
-
-                  if (!point) {
-                    return null
-                  }
-
-                  const routeMap = mapById.get(point.mapId) ?? activeMap
-                  const nearest = findNearestAetheryte(routeMap.zoneId, point, referenceData.aetherytes)
-                  const routeMapPoints = gradePoints.filter((entry) => entry.mapId === routeMap.id)
-
-                  return (
-                    <article
-                      key={routeEntry.id}
-                      className={
-                        routeEntry.completed ? 'treasure-card treasure-card--done' : 'treasure-card'
-                      }
-                    >
-                      <div className="history-item__top">
-                        <strong>
-                          路線 {index + 1} | {routeMap.label} {getMapPointLabel(routeMapPoints, point.id)}
-                        </strong>
-                        <span className="badge">{routeEntry.completed ? '已完成' : '進行中'}</span>
-                      </div>
-
-                      <p className="treasure-card__meta">
-                        座標：X {point.x.toFixed(1)} / Y {point.y.toFixed(1)}
-                      </p>
-                      <p className="treasure-card__meta">
-                        最近傳送：{nearest ? nearest.name : '沒有資料'}
-                      </p>
-
-                      <div className="field-grid">
-                        <label className="field">
-                          <span className="field-label">指派隊員</span>
-                          <select
-                            className="input-select"
-                            onChange={(event) =>
-                              replaceCurrentGradeRoute(
-                                activeRoute.map((entry) =>
-                                  entry.id === routeEntry.id
-                                    ? { ...entry, playerName: event.target.value }
-                                    : entry,
-                                ),
-                              )
-                            }
-                            value={routeEntry.playerName}
-                          >
-                            <option value="">未指定</option>
-                            {normalizedPartyMembers.map((name) => (
-                              <option key={`${routeEntry.id}-${name}`} value={name}>
-                                {name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label className="field">
-                          <span className="field-label">備註</span>
-                          <input
-                            className="input-text"
-                            onChange={(event) =>
-                              replaceCurrentGradeRoute(
-                                activeRoute.map((entry) =>
-                                  entry.id === routeEntry.id
-                                    ? { ...entry, note: event.target.value }
-                                    : entry,
-                                ),
-                              )
-                            }
-                            placeholder="例如：先飛主城、集合後再進圖"
-                            type="text"
-                            value={routeEntry.note}
-                          />
-                        </label>
-                      </div>
-
-                      <div className="button-row">
-                        <button
-                          className="button button--ghost"
-                          onClick={() => {
-                            setMapId(routeMap.id)
-                            setPointId(point.id)
-                          }}
-                          type="button"
-                        >
-                          切到這個點
-                        </button>
-                        <button
-                          className="button button--ghost"
-                          disabled={index === 0}
-                          onClick={() => {
-                            const nextRoute = [...activeRoute]
-                            const current = nextRoute[index]
-                            nextRoute[index] = nextRoute[index - 1]
-                            nextRoute[index - 1] = current
-                            replaceCurrentGradeRoute(nextRoute)
-                          }}
-                          type="button"
-                        >
-                          上移
-                        </button>
-                        <button
-                          className="button button--ghost"
-                          disabled={index === activeRoute.length - 1}
-                          onClick={() => {
-                            const nextRoute = [...activeRoute]
-                            const current = nextRoute[index]
-                            nextRoute[index] = nextRoute[index + 1]
-                            nextRoute[index + 1] = current
-                            replaceCurrentGradeRoute(nextRoute)
-                          }}
-                          type="button"
-                        >
-                          下移
-                        </button>
-                        <button
-                          className="button button--ghost"
-                          onClick={() =>
-                            replaceCurrentGradeRoute(
+                    <div className="field-grid">
+                      <label className="field">
+                        <span className="field-label">指派隊員</span>
+                        <select
+                          className="input-select"
+                          onChange={(event) =>
+                            void commitRoute(
                               activeRoute.map((entry) =>
                                 entry.id === routeEntry.id
-                                  ? { ...entry, completed: !entry.completed }
+                                  ? { ...entry, playerName: event.target.value }
                                   : entry,
                               ),
+                              '已更新指派隊員',
                             )
                           }
-                          type="button"
+                          value={routeEntry.playerName}
                         >
-                          {routeEntry.completed ? '標記為未完成' : '標記完成'}
-                        </button>
-                        <button
-                          className="button button--ghost"
-                          onClick={() =>
-                            replaceCurrentGradeRoute(
-                              activeRoute.filter((entry) => entry.id !== routeEntry.id),
+                          <option value="">未指定</option>
+                          {currentMemberOptions.map((name) => (
+                            <option key={`${routeEntry.id}-${name}`} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span className="field-label">備註</span>
+                        <input
+                          className="input-text"
+                          onChange={(event) =>
+                            void commitRoute(
+                              activeRoute.map((entry) =>
+                                entry.id === routeEntry.id
+                                  ? { ...entry, note: event.target.value }
+                                  : entry,
+                              ),
+                              '已更新路線備註',
                             )
                           }
-                          type="button"
-                        >
-                          移除
-                        </button>
-                        <button
-                          className="button button--primary"
-                          onClick={() =>
-                            void handleCopy(
-                              `party-${routeEntry.id}`,
-                              buildPartyMessage(point, routeMap, referenceData.aetherytes, routeEntry.playerName),
-                            )
-                          }
-                          type="button"
-                        >
-                          {copiedLabel === `party-${routeEntry.id}` ? '已複製' : '複製隊頻文字'}
-                        </button>
-                      </div>
+                          placeholder="例如：先集合後再進圖"
+                          type="text"
+                          value={routeEntry.note}
+                        />
+                      </label>
+                    </div>
 
-                      {routeEntry.note ? <p className="treasure-card__meta">備註：{routeEntry.note}</p> : null}
-                    </article>
-                  )
-                })}
-              </div>
-            )}
-          </section>
-        </>
+                    <div className="button-row">
+                      <button
+                        className="button button--ghost"
+                        onClick={() => {
+                          setMapId(routeMap.id)
+                          setPointId(point.id)
+                        }}
+                        type="button"
+                      >
+                        定位到地圖
+                      </button>
+                      <button
+                        className="button button--ghost"
+                        disabled={index === 0}
+                        onClick={() => {
+                          const nextRoute = [...activeRoute]
+                          const current = nextRoute[index]
+                          nextRoute[index] = nextRoute[index - 1]
+                          nextRoute[index - 1] = current
+                          void commitRoute(nextRoute, '已上移一個路線項目')
+                        }}
+                        type="button"
+                      >
+                        上移
+                      </button>
+                      <button
+                        className="button button--ghost"
+                        disabled={index === activeRoute.length - 1}
+                        onClick={() => {
+                          const nextRoute = [...activeRoute]
+                          const current = nextRoute[index]
+                          nextRoute[index] = nextRoute[index + 1]
+                          nextRoute[index + 1] = current
+                          void commitRoute(nextRoute, '已下移一個路線項目')
+                        }}
+                        type="button"
+                      >
+                        下移
+                      </button>
+                      <button
+                        className="button button--ghost"
+                        onClick={() =>
+                          void commitRoute(
+                            activeRoute.map((entry) =>
+                              entry.id === routeEntry.id
+                                ? { ...entry, completed: !entry.completed }
+                                : entry,
+                            ),
+                            routeEntry.completed ? '已標記為未完成' : '已標記為完成',
+                          )
+                        }
+                        type="button"
+                      >
+                        {routeEntry.completed ? '取消完成' : '標記完成'}
+                      </button>
+                      <button
+                        className="button button--ghost"
+                        onClick={() =>
+                          void commitRoute(
+                            activeRoute.filter((entry) => entry.id !== routeEntry.id),
+                            '已移除一個路線項目',
+                          )
+                        }
+                        type="button"
+                      >
+                        移除
+                      </button>
+                      <button
+                        className="button button--primary"
+                        onClick={() =>
+                          void handleCopy(
+                            `party-${routeEntry.id}`,
+                            buildPartyMessage(point, routeMap, referenceData.aetherytes, routeEntry.playerName),
+                          )
+                        }
+                        type="button"
+                      >
+                        {copiedLabel === `party-${routeEntry.id}` ? '已複製' : '複製隊頻文字'}
+                      </button>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </section>
       ) : (
         <section className="page-card">
           <div className="section-heading">
             <h2>單人寶圖模式</h2>
-            <p>
-              單人寶圖不會顯示建房與組隊功能。你仍然可以切換點位、查看最近傳送點，並複製寶圖座標。
-            </p>
+            <p>單人寶圖不顯示隊伍同步與路線分工，但仍可用來查看點位與複製座標。</p>
           </div>
         </section>
       )}

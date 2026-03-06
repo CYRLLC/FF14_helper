@@ -22,6 +22,13 @@ function buildDefaults(): RuntimeConfig {
     googleClientId: '',
     oneDriveRedirectUri: buildDefaultRedirectUri(),
     googleRedirectUri: buildDefaultRedirectUri(),
+    firebaseApiKey: '',
+    firebaseAuthDomain: '',
+    firebaseDatabaseUrl: '',
+    firebaseProjectId: '',
+    firebaseStorageBucket: '',
+    firebaseMessagingSenderId: '',
+    firebaseAppId: '',
   }
 }
 
@@ -49,6 +56,22 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
         defaults.oneDriveRedirectUri,
       ),
       googleRedirectUri: sanitizeString(rawConfig.googleRedirectUri, defaults.googleRedirectUri),
+      firebaseApiKey: sanitizeString(rawConfig.firebaseApiKey, defaults.firebaseApiKey),
+      firebaseAuthDomain: sanitizeString(rawConfig.firebaseAuthDomain, defaults.firebaseAuthDomain),
+      firebaseDatabaseUrl: sanitizeString(
+        rawConfig.firebaseDatabaseUrl,
+        defaults.firebaseDatabaseUrl,
+      ),
+      firebaseProjectId: sanitizeString(rawConfig.firebaseProjectId, defaults.firebaseProjectId),
+      firebaseStorageBucket: sanitizeString(
+        rawConfig.firebaseStorageBucket,
+        defaults.firebaseStorageBucket,
+      ),
+      firebaseMessagingSenderId: sanitizeString(
+        rawConfig.firebaseMessagingSenderId,
+        defaults.firebaseMessagingSenderId,
+      ),
+      firebaseAppId: sanitizeString(rawConfig.firebaseAppId, defaults.firebaseAppId),
     }
   } catch {
     return defaults

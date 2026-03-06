@@ -1,19 +1,20 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { HashRouter, NavLink, Route, Routes } from 'react-router-dom'
 import { loadRuntimeConfig } from './config/runtime'
-import AboutPage from './pages/AboutPage'
-import BackupPage from './pages/BackupPage'
-import GoldSaucerPage from './pages/GoldSaucerPage'
-import HomePage from './pages/HomePage'
-import LabPage from './pages/LabPage'
-import MarketPage from './pages/MarketPage'
-import RestorePage from './pages/RestorePage'
-import SyncPage from './pages/SyncPage'
-import ToolsPage from './pages/ToolsPage'
-import TreasurePage from './pages/TreasurePage'
 import { SyncProvider } from './sync/SyncContext'
 import type { RuntimeConfig } from './types'
 import { getErrorMessage } from './utils/errors'
+
+const AboutPage = lazy(() => import('./pages/AboutPage'))
+const BackupPage = lazy(() => import('./pages/BackupPage'))
+const GoldSaucerPage = lazy(() => import('./pages/GoldSaucerPage'))
+const HomePage = lazy(() => import('./pages/HomePage'))
+const LabPage = lazy(() => import('./pages/LabPage'))
+const MarketPage = lazy(() => import('./pages/MarketPage'))
+const RestorePage = lazy(() => import('./pages/RestorePage'))
+const SyncPage = lazy(() => import('./pages/SyncPage'))
+const ToolsPage = lazy(() => import('./pages/ToolsPage'))
+const TreasurePage = lazy(() => import('./pages/TreasurePage'))
 
 const navItems = [
   { label: '首頁', to: '/' },
@@ -56,7 +57,7 @@ function App() {
     return (
       <div className="app-shell">
         <div className="status-panel status-panel--error">
-          <h1>無法載入網站設定</h1>
+          <h1>設定載入失敗</h1>
           <p>{loadError}</p>
         </div>
       </div>
@@ -68,7 +69,7 @@ function App() {
       <div className="app-shell">
         <div className="status-panel">
           <h1>FF14 Helper</h1>
-          <p>正在載入執行期設定與雲端服務資訊...</p>
+          <p>正在載入站台設定與可用功能。</p>
         </div>
       </div>
     )
@@ -80,13 +81,14 @@ function App() {
         <div className="app-shell">
           <header className="site-header">
             <div className="brand-lockup">
-              <p className="eyebrow">純前端 FF14 幫手</p>
+              <p className="eyebrow">FF14 網頁助手</p>
               <h1>{config.appName}</h1>
               <p className="subtitle">
-                盡量在瀏覽器內完成備份、檢查、查價、藏寶圖與同步整理，不把資料存到本站伺服器。
+                以純前端方式整理備份、查價、金碟時程與藏寶圖工具。需要第三方資料或同步服務時，
+                會直接在頁面中標示來源與設定需求。
               </p>
             </div>
-            <nav className="site-nav" aria-label="主要導覽">
+            <nav className="site-nav" aria-label="主導覽">
               {navItems.map((item) => (
                 <NavLink
                   key={item.to}
@@ -101,18 +103,31 @@ function App() {
           </header>
 
           <main className="page-shell">
-            <Routes>
-              <Route path="/" element={<HomePage appName={config.appName} />} />
-              <Route path="/backup" element={<BackupPage config={config} />} />
-              <Route path="/restore" element={<RestorePage />} />
-              <Route path="/gold-saucer" element={<GoldSaucerPage />} />
-              <Route path="/market" element={<MarketPage />} />
-              <Route path="/treasure" element={<TreasurePage />} />
-              <Route path="/lab" element={<LabPage />} />
-              <Route path="/sync" element={<SyncPage />} />
-              <Route path="/tools" element={<ToolsPage />} />
-              <Route path="/about" element={<AboutPage config={config} />} />
-            </Routes>
+            <Suspense
+              fallback={
+                <div className="page-grid">
+                  <section className="page-card">
+                    <div className="section-heading">
+                      <h2>載入頁面中</h2>
+                      <p>正在整理你要打開的功能頁。</p>
+                    </div>
+                  </section>
+                </div>
+              }
+            >
+              <Routes>
+                <Route path="/" element={<HomePage appName={config.appName} />} />
+                <Route path="/backup" element={<BackupPage config={config} />} />
+                <Route path="/restore" element={<RestorePage />} />
+                <Route path="/gold-saucer" element={<GoldSaucerPage />} />
+                <Route path="/market" element={<MarketPage />} />
+                <Route path="/treasure" element={<TreasurePage config={config} />} />
+                <Route path="/lab" element={<LabPage />} />
+                <Route path="/sync" element={<SyncPage />} />
+                <Route path="/tools" element={<ToolsPage />} />
+                <Route path="/about" element={<AboutPage config={config} />} />
+              </Routes>
+            </Suspense>
           </main>
         </div>
       </SyncProvider>

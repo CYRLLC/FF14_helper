@@ -59,6 +59,13 @@ export interface RuntimeConfig {
   googleClientId: string
   oneDriveRedirectUri: string
   googleRedirectUri: string
+  firebaseApiKey: string
+  firebaseAuthDomain: string
+  firebaseDatabaseUrl: string
+  firebaseProjectId: string
+  firebaseStorageBucket: string
+  firebaseMessagingSenderId: string
+  firebaseAppId: string
 }
 
 export interface ToolDirectoryEntry {

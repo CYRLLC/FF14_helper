@@ -4,5 +4,12 @@
   "oneDriveClientId": "",
   "googleClientId": "",
   "oneDriveRedirectUri": "",
-  "googleRedirectUri": ""
+  "googleRedirectUri": "",
+  "firebaseApiKey": "",
+  "firebaseAuthDomain": "",
+  "firebaseDatabaseUrl": "",
+  "firebaseProjectId": "",
+  "firebaseStorageBucket": "",
+  "firebaseMessagingSenderId": "",
+  "firebaseAppId": ""
 }

@@ -14,8 +14,8 @@ function SourceAttribution({ entries, title = '參考來源' }: SourceAttributio
       <div className="section-heading">
         <h2>{title}</h2>
         <p>
-          以下列出本頁功能參考與資料來源。本站只參考方向與公開資料格式，實作時會使用自己的介面、
-          文案與程式碼，不直接複製原站內容。
+          本站會清楚標示功能參考與資料來源。這些網站提供設計方向、資料規則或公開資料，但本站的
+          介面、程式結構與文案皆為重新整理與重新實作，不直接複製原站內容。
         </p>
       </div>
 
@@ -23,7 +23,7 @@ function SourceAttribution({ entries, title = '參考來源' }: SourceAttributio
         <div className="list-panel">
           <p className="callout-title">功能參考</p>
           {inspirationEntries.length === 0 ? (
-            <p className="muted">這一頁目前沒有額外列出的功能參考來源。</p>
+            <p className="muted">這個頁面目前沒有額外列出的功能參考來源。</p>
           ) : (
             <div className="source-list">
               {inspirationEntries.map((entry) => (
@@ -41,7 +41,7 @@ function SourceAttribution({ entries, title = '參考來源' }: SourceAttributio
         <div className="list-panel">
           <p className="callout-title">資料來源</p>
           {dataEntries.length === 0 ? (
-            <p className="muted">這一頁目前沒有額外列出的資料來源。</p>
+            <p className="muted">這個頁面目前沒有額外列出的資料來源。</p>
           ) : (
             <div className="source-list">
               {dataEntries.map((entry) => (
