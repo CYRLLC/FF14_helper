@@ -66,7 +66,7 @@ button {
   display: grid;
   gap: 1.5rem;
   align-items: end;
-  margin: 0 auto 2rem;
+  margin: 0 auto;
   max-width: 1520px;
 }
 
@@ -775,6 +775,67 @@ button {
   border: 1px solid var(--border);
   border-radius: 1rem;
   background: rgba(255, 255, 255, 0.03);
+}
+
+/* ── Tool tab system ─────────────────────────────── */
+
+.tool-tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tool-tab-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.tool-tab {
+  flex-shrink: 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0.5rem 0.5rem 0 0;
+  padding: 0.75rem 1.25rem;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.tool-tab:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tool-tab--active {
+  border-bottom-color: var(--accent);
+  color: var(--accent-strong);
+  background: rgba(246, 189, 82, 0.06);
+}
+
+.tool-panel {
+  margin-top: 1.25rem;
+  animation: riseIn 260ms ease forwards;
+}
+
+/* ── Sticky site header ──────────────────────────── */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(10, 17, 26, 0.88);
+  backdrop-filter: blur(18px);
+  padding-bottom: 1.25rem;
+  margin-bottom: 0.75rem;
 }
 
 .sr-only {

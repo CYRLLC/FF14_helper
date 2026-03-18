@@ -1369,7 +1369,7 @@ export function parseMacroText(rawValue: string): CraftActionId[] {
     .filter(Boolean)
     .map((line) => {
       const quoted = line.match(/"([^"]+)"/u)?.[1]
-      return quoted ?? line.replace(/^\/ac\s+/u, '').trim()
+      return quoted ?? line.replace(/^\/ac\s+/u, '').replace(/\s*<wait\.\d+>/u, '').trim()
     })
 
   const nameMap = new Map<string, CraftActionId>()
