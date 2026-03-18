@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchRecipeDetails, searchRecipeResults, searchXivapi, type XivapiRecipeSearchResult, type XivapiSearchResult } from '../api/xivapi'
 import { pageSources } from '../catalog/sources'
@@ -26,9 +26,14 @@ const STORAGE_KEY = 'ff14-helper.craft.workbench.v3'
 
 type TaskFilter = 'all' | 'custom' | 'tribe-craft' | 'tribe-gather'
 type ActionPaletteFilter = 'all' | 'progress' | 'quality' | 'support'
+type CraftJobId = 'carpenter' | 'blacksmith' | 'armorer' | 'goldsmith' | 'leatherworker' | 'weaver' | 'alchemist' | 'culinarian'
+
+type CraftJobProfiles = Record<CraftJobId, CraftStats>
 
 interface SavedCraftState {
   stats: CraftStats
+  currentJob: CraftJobId
+  jobProfiles: CraftJobProfiles
   recipe: CraftRecipe
   sequence: CraftActionId[]
   importText: string
@@ -64,6 +69,18 @@ const localizedActionNames: Record<CraftActionId, string> = {
   manipulation: '掌握',
   mastersMend: '精修',
   observe: '觀察',
+  // 新增技能
+  tricksOfTheTrade: '秘訣',
+  refinedTouch: '精煉加工',
+  finalAppraisal: '最終確認',
+  trainedEye: '工匠的神速技巧',
+  heartAndSoul: '專心致志',
+  immaculateMend: '巧奪天工',
+  trainedPerfection: '工匠的絕技',
+  quickInnovation: '快速改革',
+  rapidSynthesis: '高速製作',
+  hastyTouch: '倉促',
+  daringTouch: '冒進',
 }
 
 const presetCopy: Record<string, { label: string; note: string }> = {
@@ -81,9 +98,59 @@ const presetCopy: Record<string, { label: string; note: string }> = {
   },
 }
 
+const craftJobOptions: Array<{ id: CraftJobId; label: string; apiName: string }> = [
+  { id: 'carpenter', label: '刻木匠', apiName: 'Carpenter' },
+  { id: 'blacksmith', label: '鍛鐵匠', apiName: 'Blacksmith' },
+  { id: 'armorer', label: '鑄甲匠', apiName: 'Armorer' },
+  { id: 'goldsmith', label: '雕金匠', apiName: 'Goldsmith' },
+  { id: 'leatherworker', label: '製革匠', apiName: 'Leatherworker' },
+  { id: 'weaver', label: '裁衣匠', apiName: 'Weaver' },
+  { id: 'alchemist', label: '鍊金術士', apiName: 'Alchemist' },
+  { id: 'culinarian', label: '烹調師', apiName: 'Culinarian' },
+]
+
+function createDefaultJobProfiles(): CraftJobProfiles {
+  const base = createDefaultCraftStats()
+  return {
+    carpenter: { ...base },
+    blacksmith: { ...base },
+    armorer: { ...base },
+    goldsmith: { ...base },
+    leatherworker: { ...base },
+    weaver: { ...base },
+    alchemist: { ...base },
+    culinarian: { ...base },
+  }
+}
+
+function mapCraftTypeNameToJobId(value?: string): CraftJobId | null {
+  if (!value) {
+    return null
+  }
+
+  const normalized = value.trim().toLocaleLowerCase('en-US')
+  return craftJobOptions.find((job) => job.apiName.toLocaleLowerCase('en-US') === normalized || job.id === normalized)?.id ?? null
+}
+
+function formatJobLabel(jobId: CraftJobId): string {
+  return craftJobOptions.find((job) => job.id === jobId)?.label ?? jobId
+}
+
+function formatRecipeJobName(jobName?: string): string {
+  const mappedJob = mapCraftTypeNameToJobId(jobName)
+  if (mappedJob) {
+    return formatJobLabel(mappedJob)
+  }
+
+  return jobName ?? '未指定'
+}
+
 function loadSavedState(): SavedCraftState {
+  const defaultProfiles = createDefaultJobProfiles()
   const fallback: SavedCraftState = {
     stats: createDefaultCraftStats(),
+    currentJob: 'culinarian',
+    jobProfiles: defaultProfiles,
     recipe: { ...createDefaultCraftRecipe(), source: '預設範例' },
     sequence: [],
     importText: '',
@@ -98,20 +165,36 @@ function loadSavedState(): SavedCraftState {
 
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
-    return raw ? { ...fallback, ...(JSON.parse(raw) as Partial<SavedCraftState>) } : fallback
+    if (!raw) {
+      return fallback
+    }
+
+    const parsed = JSON.parse(raw) as Partial<SavedCraftState>
+    const nextCurrentJob = parsed.currentJob ?? fallback.currentJob
+    const nextProfiles = { ...defaultProfiles, ...(parsed.jobProfiles ?? {}) }
+
+    return {
+      ...fallback,
+      ...parsed,
+      currentJob: nextCurrentJob,
+      jobProfiles: nextProfiles,
+      stats: nextProfiles[nextCurrentJob] ?? parsed.stats ?? fallback.stats,
+    }
   } catch {
     return fallback
   }
 }
 
-function groupActions(): Array<{ id: ActionPaletteFilter; title: string; description: string; items: CraftActionDefinition[] }> {
+function groupActions(isSpecialist: boolean): Array<{ id: ActionPaletteFilter; title: string; description: string; items: CraftActionDefinition[] }> {
+  const specialistIds: CraftActionId[] = ['heartAndSoul', 'immaculateMend', 'trainedPerfection', 'quickInnovation']
+
   return [
     {
       id: 'progress',
       title: '開場與進度',
       description: '先推進製作進度，適合擺在 rotation 前段。',
       items: craftActionDefinitions.filter((action) =>
-        ['reflect', 'muscleMemory', 'veneration', 'basicSynthesis', 'carefulSynthesis', 'groundwork', 'prudentSynthesis', 'focusedSynthesis', 'intensiveSynthesis', 'delicateSynthesis'].includes(action.id),
+        (['reflect', 'muscleMemory', 'trainedEye', 'veneration', 'basicSynthesis', 'carefulSynthesis', 'groundwork', 'prudentSynthesis', 'focusedSynthesis', 'intensiveSynthesis', 'delicateSynthesis', 'rapidSynthesis'] as CraftActionId[]).includes(action.id),
       ),
     },
     {
@@ -119,15 +202,27 @@ function groupActions(): Array<{ id: ActionPaletteFilter; title: string; descrip
       title: '品質與收尾',
       description: '提高品質、堆疊內靜與做最終收尾。',
       items: craftActionDefinitions.filter((action) =>
-        ['innovation', 'greatStrides', 'basicTouch', 'standardTouch', 'advancedTouch', 'prudentTouch', 'preparatoryTouch', 'focusedTouch', 'preciseTouch', 'trainedFinesse', 'byregotsBlessing'].includes(action.id),
+        (['innovation', 'greatStrides', 'basicTouch', 'standardTouch', 'advancedTouch', 'refinedTouch', 'prudentTouch', 'preparatoryTouch', 'focusedTouch', 'preciseTouch', 'trainedFinesse', 'byregotsBlessing', 'hastyTouch', 'daringTouch'] as CraftActionId[]).includes(action.id),
       ),
     },
     {
       id: 'support',
       title: '耐久與輔助',
       description: '用來保耐久、開狀態或準備 Focused 技能。',
-      items: craftActionDefinitions.filter((action) => ['wasteNot', 'wasteNotII', 'manipulation', 'mastersMend', 'observe'].includes(action.id)),
+      items: craftActionDefinitions.filter((action) =>
+        (['finalAppraisal', 'wasteNot', 'wasteNotII', 'manipulation', 'mastersMend', 'tricksOfTheTrade', 'observe'] as CraftActionId[]).includes(action.id),
+      ),
     },
+    ...(isSpecialist
+      ? [
+          {
+            id: 'support' as ActionPaletteFilter,
+            title: '專家職業技能（Specialist）',
+            description: '需要持有 專家圖紙 才能解鎖，每次製作有使用次數限制。',
+            items: craftActionDefinitions.filter((action) => specialistIds.includes(action.id as CraftActionId)),
+          },
+        ]
+      : []),
   ]
 }
 
@@ -173,6 +268,8 @@ function formatRecipeSource(source?: string): string {
 function CraftPage() {
   const [savedState] = useState(() => loadSavedState())
   const [stats, setStats] = useState<CraftStats>(savedState.stats)
+  const [currentJob, setCurrentJob] = useState<CraftJobId>(savedState.currentJob)
+  const [jobProfiles, setJobProfiles] = useState<CraftJobProfiles>(savedState.jobProfiles)
   const [recipe, setRecipe] = useState<CraftRecipe>(savedState.recipe)
   const [sequence, setSequence] = useState<CraftActionId[]>(savedState.sequence)
   const [importText, setImportText] = useState(savedState.importText)
@@ -190,18 +287,23 @@ function CraftPage() {
   const [solverLoading, setSolverLoading] = useState(false)
   const [solverNotes, setSolverNotes] = useState<string[]>([])
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
       window.localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ stats, recipe, sequence, importText, conditionMode, solverObjective, taskFilter } satisfies SavedCraftState),
+        JSON.stringify({ stats, currentJob, jobProfiles, recipe, sequence, importText, conditionMode, solverObjective, taskFilter } satisfies SavedCraftState),
       )
     }
-  }, [conditionMode, importText, recipe, sequence, solverObjective, stats, taskFilter])
+  }, [conditionMode, currentJob, importText, jobProfiles, recipe, sequence, solverObjective, stats, taskFilter])
+
+  useEffect(() => {
+    setStats(jobProfiles[currentJob])
+  }, [currentJob, jobProfiles])
 
   const simulation = useMemo(() => simulateCraft(stats, recipe, sequence, { conditionMode }), [conditionMode, recipe, sequence, stats])
-  const actionGroups = useMemo(() => groupActions(), [])
+  const actionGroups = useMemo(() => groupActions(stats.specialist ?? false), [stats.specialist])
   const filteredActionGroups = useMemo(
     () =>
       actionGroups
@@ -243,6 +345,8 @@ function CraftPage() {
 
     return ['byregotsBlessing', 'carefulSynthesis', 'mastersMend'] as CraftActionId[]
   }, [sequence.length, simulation.completionPercent, simulation.qualityPercent])
+  const recipeJobId = useMemo(() => mapCraftTypeNameToJobId(recipe.jobName), [recipe.jobName])
+  const recipeJobMismatch = recipeJobId ? recipeJobId !== currentJob : false
   const relevantTasks = useMemo(
     () =>
       collectionEntries.filter((entry) => {
@@ -260,8 +364,12 @@ function CraftPage() {
     [taskFilter],
   )
 
-  function updateStats<K extends keyof CraftStats>(key: K, value: number): void {
-    setStats((current) => ({ ...current, [key]: value }))
+  function updateStats<K extends keyof CraftStats>(key: K, value: CraftStats[K]): void {
+    setStats((current) => {
+      const next = { ...current, [key]: value }
+      setJobProfiles((profiles) => ({ ...profiles, [currentJob]: next }))
+      return next
+    })
   }
 
   function updateRecipe<K extends keyof CraftRecipe>(key: K, value: CraftRecipe[K]): void {
@@ -310,6 +418,7 @@ function CraftPage() {
   async function applyRecipeFromRow(rowId: number): Promise<void> {
     try {
       const detail = await fetchRecipeDetails(rowId)
+      const matchedJob = mapCraftTypeNameToJobId(detail.craftTypeName)
       setRecipe({
         name: detail.name,
         level: detail.classJobLevel,
@@ -327,6 +436,9 @@ function CraftPage() {
         ingredients: detail.ingredients,
         source: 'XIVAPI Recipe',
       })
+      if (matchedJob) {
+        setCurrentJob(matchedJob)
+      }
       setSelectedRecipeRowId(rowId)
       setMessage(`已帶入配方：${detail.name}。`)
     } catch (error) {
@@ -389,6 +501,14 @@ function CraftPage() {
     }
     setSequence(parsed)
     setMessage(`已從 macro 匯入 ${parsed.length} 個動作。`)
+  }
+
+  function handleTaskSearch(query: string): void {
+    setSearchQuery(query)
+    window.setTimeout(() => {
+      searchInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      searchInputRef.current?.focus()
+    }, 50)
   }
 
   async function handleCopy(label: string, value: string): Promise<void> {
@@ -466,15 +586,24 @@ function CraftPage() {
         <article className="page-card">
           <div className="section-heading">
             <h2>步驟 1：帶入配方與能力</h2>
-            <p>先用配方搜尋或範例配方建立工作台，再確認你的 Craftsmanship / Control / CP。</p>
+            <p>先選目前正在製作的職業，再設定這個職業自己的能力值。不同職業會各自保存一套數值。</p>
           </div>
           <div className="field-grid">
+            <label className="field">
+              <span className="field-label">目前職業</span>
+              <select className="input-select" onChange={(event) => setCurrentJob(event.target.value as CraftJobId)} value={currentJob}>
+                {craftJobOptions.map((job) => (
+                  <option key={job.id} value={job.id}>{job.label}</option>
+                ))}
+              </select>
+            </label>
             <label className="field">
               <span className="field-label">搜尋配方或道具</span>
               <input
                 className="input-text"
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder="例如 Bronze Ingot / Tacos / Potion"
+                ref={searchInputRef}
                 type="text"
                 value={searchQuery}
               />
@@ -483,6 +612,54 @@ function CraftPage() {
             <label className="field"><span className="field-label">Craftsmanship</span><input className="input-text" min="1" onChange={(event) => updateStats('craftsmanship', Number(event.target.value))} type="number" value={stats.craftsmanship} /></label>
             <label className="field"><span className="field-label">Control</span><input className="input-text" min="1" onChange={(event) => updateStats('control', Number(event.target.value))} type="number" value={stats.control} /></label>
             <label className="field"><span className="field-label">CP</span><input className="input-text" min="1" onChange={(event) => updateStats('cp', Number(event.target.value))} type="number" value={stats.cp} /></label>
+            <label className="field" style={{ gridColumn: 'span 2' }}>
+              <span className="field-label">Specialist（持有專家圖紙）</span>
+              <div className="choice-row">
+                <button
+                  className={stats.specialist ? 'choice-button choice-button--active' : 'choice-button'}
+                  onClick={() => updateStats('specialist', true)}
+                  type="button"
+                >
+                  是
+                </button>
+                <button
+                  className={!stats.specialist ? 'choice-button choice-button--active' : 'choice-button'}
+                  onClick={() => updateStats('specialist', false)}
+                  type="button"
+                >
+                  否
+                </button>
+              </div>
+            </label>
+          </div>
+          {stats.specialist ? (
+            <div className="callout">
+              <span className="callout-title">Specialist 模式已開啟</span>
+              <span className="callout-body">
+                技能面板中會顯示「專家職業技能」分組，包含專心致志、巧奪天工、工匠的絕技、快速改革。
+              </span>
+            </div>
+          ) : null}
+          {stats.level >= recipe.level + 10 ? (
+            <div className="callout callout--positive">
+              <span className="callout-title">可使用工匠的神速技巧</span>
+              <span className="callout-body">
+                你的職等（{stats.level}）比配方等級（{recipe.level}）高出 {stats.level - recipe.level} 級，可於第一手直接最大化品質。
+              </span>
+            </div>
+          ) : null}
+          <div className="callout">
+            <span className="callout-title">目前職業能力值</span>
+            <span className="callout-body">
+              {formatJobLabel(currentJob)}：Lv.{stats.level} / Craftsmanship {stats.craftsmanship} / Control {stats.control} / CP {stats.cp}{stats.specialist ? ' / Specialist' : ''}
+            </span>
+          </div>
+          <div className="sequence-chip-list">
+            {craftJobOptions.map((job) => (
+              <span key={job.id} className={job.id === currentJob ? 'sequence-chip sequence-chip--active' : 'sequence-chip'}>
+                {job.label} {jobProfiles[job.id].craftsmanship}/{jobProfiles[job.id].control}/{jobProfiles[job.id].cp}
+              </span>
+            ))}
           </div>
           <div className="button-row">
             <button className="button button--primary" disabled={searchLoading} onClick={() => void handleRecipeSearch()} type="button">
@@ -500,7 +677,7 @@ function CraftPage() {
                 <div className="history-item__top">
                   <strong>{result.name}</strong>
                   <span className={selectedRecipeRowId === result.rowId ? 'badge badge--positive' : 'badge'}>
-                    {result.craftTypeName ?? 'Unknown'}
+                    {formatRecipeJobName(result.craftTypeName)}
                   </span>
                 </div>
                 <div className="button-row">
@@ -533,6 +710,24 @@ function CraftPage() {
           </div>
           <div className="field-grid">
             <label className="field"><span className="field-label">配方名稱</span><input className="input-text" onChange={(event) => updateRecipe('name', event.target.value)} type="text" value={recipe.name} /></label>
+            <label className="field">
+              <span className="field-label">配方職業</span>
+              <select
+                className="input-select"
+                onChange={(event) =>
+                  updateRecipe(
+                    'jobName',
+                    craftJobOptions.find((job) => job.id === event.target.value)?.apiName ?? undefined,
+                  )
+                }
+                value={mapCraftTypeNameToJobId(recipe.jobName) ?? ''}
+              >
+                <option value="">未指定</option>
+                {craftJobOptions.map((job) => (
+                  <option key={job.id} value={job.id}>{job.label}</option>
+                ))}
+              </select>
+            </label>
             <label className="field"><span className="field-label">配方等級</span><input className="input-text" min="1" onChange={(event) => updateRecipe('level', Number(event.target.value))} type="number" value={recipe.level} /></label>
             <label className="field"><span className="field-label">Difficulty</span><input className="input-text" min="1" onChange={(event) => updateRecipe('difficulty', Number(event.target.value))} type="number" value={recipe.difficulty} /></label>
             <label className="field"><span className="field-label">Quality</span><input className="input-text" min="0" onChange={(event) => updateRecipe('quality', Number(event.target.value))} type="number" value={recipe.quality} /></label>
@@ -541,10 +736,19 @@ function CraftPage() {
           </div>
           <div className="badge-row">
             <span className="badge">來源：{formatRecipeSource(recipe.source)}</span>
-            <span className="badge">職業：{recipe.jobName ?? '未指定'}</span>
+            <span className="badge">配方職業：{formatRecipeJobName(recipe.jobName)}</span>
+            <span className="badge">目前職業：{formatJobLabel(currentJob)}</span>
             <span className="badge">{recipe.canHq === false ? '不可 HQ' : '可 HQ'}</span>
             {recipe.yield ? <span className="badge">產出數量：{recipe.yield}</span> : null}
           </div>
+          {recipeJobMismatch ? (
+            <div className="callout callout--error">
+              <span className="callout-title">職業不一致</span>
+              <span className="callout-body">
+                這張配方屬於 {formatRecipeJobName(recipe.jobName)}，但你目前選的是 {formatJobLabel(currentJob)}。如要模擬正確數值，請切回對應職業。
+              </span>
+            </div>
+          ) : null}
           {recipe.ingredients && recipe.ingredients.length > 0 ? (
             <div className="history-list">
               {recipe.ingredients.map((ingredient) => (
@@ -772,7 +976,7 @@ function CraftPage() {
             <button className={taskFilter === 'tribe-gather' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('tribe-gather')} type="button">友好部落 / 採集</button>
           </div>
           <div className="history-list">
-            {relevantTasks.slice(0, 8).map((entry) => (
+            {relevantTasks.map((entry) => (
               <article key={entry.id} className="history-item">
                 <div className="history-item__top">
                   <strong>{entry.name}</strong>
@@ -781,7 +985,23 @@ function CraftPage() {
                 <p className="muted">
                   {entry.location} | Patch {entry.patch} | {entry.supportRoles.map((role) => formatSupportRole(role)).join(' / ')}
                 </p>
+                {entry.rewardSummary.length > 0 ? (
+                  <div className="badge-row">
+                    {entry.rewardSummary.map((item) => (
+                      <button
+                        key={item}
+                        className="choice-button"
+                        onClick={() => handleTaskSearch(item)}
+                        title={`以「${item}」搜尋配方`}
+                        type="button"
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="button-row">
+                  <button className="button button--ghost" onClick={() => handleTaskSearch(entry.name)} type="button">帶入搜尋</button>
                   <Link className="button button--ghost" to="/collection">前往收藏追蹤</Link>
                   {entry.sourceUrl ? <a className="button button--ghost" href={entry.sourceUrl} rel="noreferrer" target="_blank">查看來源</a> : null}
                 </div>

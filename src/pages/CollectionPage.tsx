@@ -224,6 +224,11 @@ function CollectionPage() {
     [summary.active, summary.completed, summary.planned, summary.wishlist],
   )
 
+  const activeTasks = useMemo(
+    () => collectionEntries.filter((entry) => trackerState.statuses[entry.id] === 'active'),
+    [trackerState.statuses],
+  )
+
   function cycleStatus(entryId: string): void {
     const current = trackerState.statuses[entryId]
     const next: CollectionStatus | null =
@@ -342,6 +347,35 @@ function CollectionPage() {
         </div>
       </section>
 
+      {activeTasks.length > 0 ? (
+        <section className="page-card">
+          <div className="section-heading">
+            <h2>今日進行中任務</h2>
+            <p>這些是你目前標記為「進行中」的內容。把它們清掉後再挑下一批，比較好維持節奏。</p>
+          </div>
+          <div className="history-list">
+            {activeTasks.map((entry) => (
+              <article key={entry.id} className="history-item">
+                <div className="history-item__top">
+                  <strong>{entry.name}</strong>
+                  <span className="badge badge--warning">進行中</span>
+                  <span className="badge">{formatCategory(entry.category)}</span>
+                </div>
+                <p className="muted">{entry.location} | Patch {entry.patch}</p>
+                <div className="button-row">
+                  <button className="button button--primary" onClick={() => cycleStatus(entry.id)} type="button">
+                    切到已完成
+                  </button>
+                  {entry.supportRoles.includes('crafting') ? (
+                    <Link className="button button--ghost" to="/craft">製作助手</Link>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="source-grid">
         <article className="page-card">
           <div className="section-heading">
@@ -363,6 +397,9 @@ function CollectionPage() {
                   <button className="button button--ghost" onClick={() => handleWishlist(entry.id)} type="button">
                     {trackerState.wishlist.includes(entry.id) ? '移出願望清單' : '加入願望清單'}
                   </button>
+                  {entry.supportRoles.includes('crafting') ? (
+                    <Link className="button button--ghost" to="/craft">製作助手</Link>
+                  ) : null}
                 </div>
               </article>
             ))}
@@ -389,6 +426,9 @@ function CollectionPage() {
                   <button className="button button--ghost" onClick={() => handleWishlist(entry.id)} type="button">
                     {trackerState.wishlist.includes(entry.id) ? '移出願望清單' : '加入願望清單'}
                   </button>
+                  {entry.supportRoles.includes('crafting') ? (
+                    <Link className="button button--ghost" to="/craft">製作助手</Link>
+                  ) : null}
                 </div>
               </article>
             ))}
@@ -508,6 +548,9 @@ function CollectionPage() {
                             <button className="button button--ghost" onClick={() => handleWishlist(entry.id)} type="button">
                               {isWishlisted ? '移出願望清單' : '加入願望清單'}
                             </button>
+                            {entry.supportRoles.includes('crafting') ? (
+                              <Link className="button button--ghost" to="/craft">製作助手</Link>
+                            ) : null}
                             {entry.sourceUrl ? (
                               <a className="button button--ghost" href={entry.sourceUrl} rel="noreferrer" target="_blank">
                                 查看資料來源

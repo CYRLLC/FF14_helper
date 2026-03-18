@@ -13,6 +13,11 @@ This project is intentionally front-end first:
 This repository is still under active development.
 Core pages are already usable, but copy, workflow details, solver quality, and UI polish will continue to evolve.
 
+## Blueprint
+
+- Detailed roadmap and execution blueprint: [`docs/project-blueprint.zh-TW.md`](docs/project-blueprint.zh-TW.md)
+- Tool integration and feature parity spec: [`docs/integration-spec.zh-TW.md`](docs/integration-spec.zh-TW.md)
+
 ## Current Feature Set
 
 ### Backup Assistant

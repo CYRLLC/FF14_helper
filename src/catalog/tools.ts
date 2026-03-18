@@ -6,16 +6,19 @@ export const toolDirectory: ToolDirectoryEntry[] = [
     name: '收藏追蹤 / collection-tc 站內版',
     category: '站內工具 / 收藏追蹤',
     description: '整合老主顧與友好部落的收藏追蹤流程，狀態與願望清單只保存在瀏覽器。',
-    url: '#/collection',
-    futureIntegration: false,
+    url: 'https://cycleapple.github.io/ffxiv-collection-tc/',
+    internalPath: '#/collection',
+    integrationStatus: 'partial',
   },
   {
     id: 'bestcraft',
     name: '製作助手 / BestCraft 站內版',
     category: '站內工具 / 製作模擬',
     description: '站內化的製作模擬、配方帶入、macro 匯入匯出與 solver 工作流。',
-    url: '#/craft',
-    futureIntegration: false,
+    url: 'https://github.com/Tnze/ffxiv-best-craft',
+    internalPath: '#/craft',
+    integrationStatus: 'partial',
+    licenseNote: 'AGPL-3.0',
   },
   {
     id: 'market-reference',
@@ -23,7 +26,7 @@ export const toolDirectory: ToolDirectoryEntry[] = [
     category: '查價工具參考',
     description: 'OCR 匯入、批次工作表與最近更新摘要的參考來源。',
     url: 'https://beherw.github.io/FFXIV_Market/',
-    futureIntegration: true,
+    integrationStatus: 'reference',
   },
   {
     id: 'treasure-finder-reference',
@@ -31,7 +34,7 @@ export const toolDirectory: ToolDirectoryEntry[] = [
     category: '藏寶圖 / 路線規劃參考',
     description: '藏寶圖點位、隊伍房間與路線規劃的重要參考來源。',
     url: 'https://cycleapple.github.io/xiv-tc-treasure-finder/',
-    futureIntegration: true,
+    integrationStatus: 'reference',
   },
   {
     id: 'toolbox-reference',
@@ -39,7 +42,7 @@ export const toolDirectory: ToolDirectoryEntry[] = [
     category: '工具箱參考',
     description: 'FF14 多功能工具箱的資訊架構與功能分類參考來源。',
     url: 'https://cycleapple.github.io/xiv-tc-toolbox/',
-    futureIntegration: true,
+    integrationStatus: 'reference',
   },
   {
     id: 'teamcraft',
@@ -47,7 +50,7 @@ export const toolDirectory: ToolDirectoryEntry[] = [
     category: '製作 / 清單管理',
     description: '製作、採集、清單管理與流程規劃的常用外部工具。',
     url: 'https://ffxivteamcraft.com/',
-    futureIntegration: false,
+    integrationStatus: 'external',
   },
   {
     id: 'garland-tools',
@@ -55,7 +58,7 @@ export const toolDirectory: ToolDirectoryEntry[] = [
     category: '資料庫',
     description: 'FF14 道具、採集與任務資料的經典資料庫。',
     url: 'https://garlandtools.org/',
-    futureIntegration: false,
+    integrationStatus: 'external',
   },
   {
     id: 'xivapi',
@@ -63,7 +66,7 @@ export const toolDirectory: ToolDirectoryEntry[] = [
     category: '資料 API',
     description: '站內多個資料查詢功能使用的官方 API 文件。',
     url: 'https://v2.xivapi.com/docs',
-    futureIntegration: true,
+    integrationStatus: 'reference',
   },
   {
     id: 'gate-reference',
@@ -71,6 +74,6 @@ export const toolDirectory: ToolDirectoryEntry[] = [
     category: '金碟參考',
     description: 'GATE 時段與活動規則的資料來源。',
     url: 'https://ffxiv.consolegameswiki.com/wiki/Gold_Saucer_Active_Time_Events',
-    futureIntegration: true,
+    integrationStatus: 'reference',
   },
 ]

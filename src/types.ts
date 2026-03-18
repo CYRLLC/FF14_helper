@@ -68,13 +68,23 @@ export interface RuntimeConfig {
   firebaseAppId: string
 }
 
+export type ToolIntegrationStatus =
+  | 'integrated'      // 已完整站內化，有對應的站內頁面
+  | 'partial'         // 已部分整合，持續擴充中
+  | 'reference'       // 只作為外部參考入口，尚未站內化
+  | 'external'        // 純外部工具，本站不計劃重製
+
 export interface ToolDirectoryEntry {
   id: string
   name: string
   category: string
   description: string
   url: string
-  futureIntegration: boolean
+  internalPath?: string       // 站內路徑（若有對應頁面）
+  integrationStatus: ToolIntegrationStatus
+  licenseNote?: string        // 授權說明（e.g. "AGPL-3.0"）
+  /** @deprecated 改用 integrationStatus */
+  futureIntegration?: boolean
 }
 
 export interface SyncPreferences {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { pageSources } from '../catalog/sources'
 import SourceAttribution from '../components/SourceAttribution'
 import { coordsToMapPercent, findNearestAetheryte } from '../treasure/coords'
@@ -108,6 +108,9 @@ function TreasurePage({ config }: TreasurePageProps) {
   const [showJoinModal, setShowJoinModal] = useState(Boolean(readRoomCodeFromHash()))
   const realtimeEnabled = isRealtimeTreasureAvailable(config)
 
+  const [ttlDisplay, setTtlDisplay] = useState<string>('')
+  const ttlEpochRef = useRef<{ snapshotMs: number; capturedAt: number } | null>(null)
+
   useEffect(() => {
     let cancelled = false
     loadTreasureReferenceData()
@@ -184,12 +187,15 @@ function TreasurePage({ config }: TreasurePageProps) {
         return
       }
       if (!state) {
+        ttlEpochRef.current = null
+        setTtlDisplay('')
         setLiveRoomState(null)
         setActiveRoomCode('')
         setLiveError('房間不存在或已過期。')
         return
       }
       setLiveRoomState(state)
+      ttlEpochRef.current = { snapshotMs: state.expiresInMs, capturedAt: Date.now() }
       setPartyRoutes((current) => ({ ...current, [state.gradeId]: state.route }))
       if (referenceData) {
         const syncedGrade = referenceData.grades.find((grade) => grade.id === state.gradeId)
@@ -208,6 +214,23 @@ function TreasurePage({ config }: TreasurePageProps) {
       unsubscribe?.()
     }
   }, [activeRoomCode, config, realtimeEnabled, referenceData])
+
+  useEffect(() => {
+    if (!activeRoomCode) {
+      setTtlDisplay('')
+      ttlEpochRef.current = null
+      return
+    }
+    const id = window.setInterval(() => {
+      const epoch = ttlEpochRef.current
+      if (!epoch) {
+        return
+      }
+      const remaining = epoch.snapshotMs - (Date.now() - epoch.capturedAt)
+      setTtlDisplay(formatDuration(Math.max(0, remaining)))
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [activeRoomCode])
 
   async function handleCopy(label: string, text: string): Promise<void> {
     try {
@@ -422,82 +445,107 @@ function TreasurePage({ config }: TreasurePageProps) {
         <section className="page-card">
           <div className="section-heading">
             <h2>步驟 2：房間與隊伍</h2>
-            <p>8 人圖才顯示房間 UI。可建立房間、複製邀請連結、查看到期倒數與成員列表。</p>
+            <p>8 人圖才顯示此區塊。建立或加入房間後可即時同步路線，離開後資料保留本機。</p>
           </div>
 
-          <div className="button-row">
-            <button className="button button--primary" disabled={!realtimeEnabled || liveBusy || Boolean(activeRoomCode)} onClick={() => setShowCreateModal(true)} type="button">建立隊伍</button>
-            <button className="button button--ghost" disabled={!realtimeEnabled || liveBusy || Boolean(activeRoomCode)} onClick={() => setShowJoinModal(true)} type="button">加入隊伍</button>
-            <button className="button button--ghost" disabled={!activeRoomCode} onClick={() => void handleCopy('invite-link', buildInviteLink(activeRoomCode))} type="button">{copiedLabel === 'invite-link' ? '已複製邀請連結' : '複製邀請連結'}</button>
-            <button className="button button--ghost" disabled={!activeRoomCode || liveBusy} onClick={() => void handleLeaveRoom()} type="button">離開隊伍</button>
-          </div>
-
-          {realtimeEnabled ? (
+          {!realtimeEnabled ? (
             <>
-              <div className="field-grid">
-                <label className="field">
-                  <span className="field-label">你的暱稱</span>
-                  <input className="input-text" onBlur={() => void handleUpdateNickname()} onChange={(event) => setRealtimeNickname(event.target.value)} type="text" value={realtimeNickname} />
-                </label>
-                <label className="field">
-                  <span className="field-label">房間名稱</span>
-                  <input className="input-text" onChange={(event) => setRoomName(event.target.value)} type="text" value={roomName} />
-                </label>
-                <label className="field">
-                  <span className="field-label">房間代碼</span>
-                  <input className="input-text" onChange={(event) => setRoomCodeInput(event.target.value.toUpperCase())} type="text" value={roomCodeInput} />
-                </label>
+              <div className="callout callout--error">
+                <span className="callout-title">即時房間未啟用</span>
+                <span className="callout-body">此環境未設定 Firebase，無法使用建隊與入隊功能。你仍可用本機隊員清單進行離線路線規劃。</span>
               </div>
-
-              <div className="stats-grid">
-                <article className="stat-card"><div className="stat-label">房間狀態</div><div className="stat-value">{activeRoomCode ? '已連線' : '尚未加入'}</div></article>
-                <article className="stat-card"><div className="stat-label">房間代碼</div><div className="stat-value">{activeRoomCode || '未建立'}</div></article>
-                <article className="stat-card"><div className="stat-label">房間名稱</div><div className="stat-value">{liveRoomState?.roomName || roomName || '未命名'}</div></article>
-                <article className="stat-card"><div className="stat-label">最近更新</div><div className="stat-value">{liveRoomState?.updatedAtLabel ?? '尚未更新'}</div></article>
-                <article className="stat-card"><div className="stat-label">到期倒數</div><div className="stat-value">{liveRoomState ? formatDuration(liveRoomState.expiresInMs) : '未加入'}</div></article>
-              </div>
-
-              {activeRoomCode ? (
+              <label className="field">
+                <span className="field-label">本機隊員清單（逗號或換行分隔）</span>
+                <input className="input-text" onChange={(event) => setMembersInput(event.target.value)} placeholder="隊員1, 隊員2, ..." type="text" value={membersInput} />
+              </label>
+              {localMembers.length > 0 ? (
+                <div className="callout">
+                  <span className="callout-title">離線隊員名單</span>
+                  <span className="callout-body">{localMembers.join(' / ')}</span>
+                </div>
+              ) : null}
+            </>
+          ) : activeRoomCode ? (
+            <div className="source-grid">
+              <div className="page-grid">
+                <div className="stats-grid">
+                  <article className="stat-card"><div className="stat-label">房間代碼</div><div className="stat-value">{activeRoomCode}</div></article>
+                  <article className="stat-card"><div className="stat-label">房間名稱</div><div className="stat-value">{liveRoomState?.roomName ?? roomName}</div></article>
+                  <article className="stat-card"><div className="stat-label">到期倒數</div><div className="stat-value">{ttlDisplay || formatDuration(liveRoomState?.expiresInMs ?? 0)}</div></article>
+                  <article className="stat-card"><div className="stat-label">到期時間</div><div className="stat-value">{liveRoomState?.expiresAtLabel ?? '未知'}</div></article>
+                  <article className="stat-card"><div className="stat-label">最近更新</div><div className="stat-value">{liveRoomState?.updatedAtLabel ?? '尚未更新'}</div></article>
+                  <article className="stat-card"><div className="stat-label">成員人數</div><div className="stat-value">{liveRoomState?.members.length ?? 1}</div></article>
+                </div>
+                <div className="badge-row">
+                  <span className="badge badge--positive">已連線</span>
+                </div>
+                {liveRoomState ? (
+                  <div className="callout">
+                    <span className="callout-title">目前成員</span>
+                    <span className="callout-body">
+                      {liveRoomState.members.map((member) => (member.userId === liveUserId ? `${member.nickname}（你）` : member.nickname)).join(' / ')}
+                    </span>
+                  </div>
+                ) : null}
                 <label className="field">
                   <span className="field-label">邀請連結</span>
                   <input className="input-text" readOnly type="text" value={inviteLink} />
                 </label>
-              ) : null}
-
-              {liveRoomState ? (
-                <div className="callout">
-                  <span className="callout-title">目前成員</span>
-                  <span className="callout-body">
-                    {liveRoomState.members.map((member) => (member.userId === liveUserId ? `${member.nickname}（你）` : member.nickname)).join(' / ')}
-                  </span>
-                  <span className="muted">房間到期時間：{liveRoomState.expiresAtLabel}</span>
+              </div>
+              <div className="page-grid">
+                <label className="field">
+                  <span className="field-label">你的暱稱</span>
+                  <input className="input-text" onBlur={() => void handleUpdateNickname()} onChange={(event) => setRealtimeNickname(event.target.value)} type="text" value={realtimeNickname} />
+                </label>
+                <div className="button-row">
+                  <button className="button button--ghost" onClick={() => void handleCopy('room-code', activeRoomCode)} type="button">{copiedLabel === 'room-code' ? '已複製代碼' : '複製房間代碼'}</button>
+                  <button className="button button--ghost" onClick={() => void handleCopy('invite-link', buildInviteLink(activeRoomCode))} type="button">{copiedLabel === 'invite-link' ? '已複製邀請連結' : '複製邀請連結'}</button>
+                  <button className="button button--ghost" disabled={liveBusy} onClick={() => void handleLeaveRoom()} type="button">離開隊伍</button>
                 </div>
-              ) : null}
-
-              {!activeRoomCode && localMembers.length > 0 ? (
+                {liveError ? (
+                  <div className="callout callout--error">
+                    <span className="callout-title">房間錯誤</span>
+                    <span className="callout-body">{liveError}</span>
+                    <div className="button-row">
+                      <button className="button button--primary" onClick={() => { setLiveError(null); setShowCreateModal(true) }} type="button">建立新房間</button>
+                      <button className="button button--ghost" onClick={() => { setLiveError(null); setShowJoinModal(true) }} type="button">加入其他房間</button>
+                    </div>
+                  </div>
+                ) : null}
+                {statusMessage ? <div className="callout callout--success"><span className="callout-title">狀態</span><span className="callout-body">{statusMessage}</span></div> : null}
+              </div>
+            </div>
+          ) : (
+            <>
+              {liveError ? (
+                <div className="callout callout--error">
+                  <span className="callout-title">房間錯誤</span>
+                  <span className="callout-body">{liveError}</span>
+                  <div className="button-row">
+                    <button className="button button--primary" disabled={liveBusy} onClick={() => { setLiveError(null); setShowCreateModal(true) }} type="button">建立新房間</button>
+                    <button className="button button--ghost" disabled={liveBusy} onClick={() => { setLiveError(null); setShowJoinModal(true) }} type="button">加入其他房間</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="button-row">
+                  <button className="button button--primary" disabled={liveBusy} onClick={() => setShowCreateModal(true)} type="button">建立隊伍</button>
+                  <button className="button button--ghost" disabled={liveBusy} onClick={() => setShowJoinModal(true)} type="button">加入隊伍</button>
+                </div>
+              )}
+              <label className="field">
+                <span className="field-label">本機隊員清單（離線規劃用）</span>
+                <input className="input-text" onChange={(event) => setMembersInput(event.target.value)} placeholder="隊員1, 隊員2, ..." type="text" value={membersInput} />
+              </label>
+              {localMembers.length > 0 ? (
                 <div className="callout">
                   <span className="callout-title">離線隊員名單</span>
                   <span className="callout-body">{localMembers.join(' / ')}</span>
                   <span className="muted">尚未連到即時房間時，路線指派會先使用這份本機隊員名單。</span>
                 </div>
               ) : null}
+              {statusMessage ? <div className="callout callout--success"><span className="callout-title">狀態</span><span className="callout-body">{statusMessage}</span></div> : null}
             </>
-          ) : (
-            <div className="callout callout--error">
-              <span className="callout-title">尚未設定即時房間</span>
-              <span className="callout-body">請先在 runtime config 設定 Firebase，才能使用建隊與入隊功能。</span>
-            </div>
           )}
-
-          {!activeRoomCode ? (
-            <label className="field">
-              <span className="field-label">本機隊員清單（離線規劃用）</span>
-              <input className="input-text" onChange={(event) => setMembersInput(event.target.value)} type="text" value={membersInput} />
-            </label>
-          ) : null}
-
-          {liveError ? <div className="callout callout--error"><span className="callout-title">房間錯誤</span><span className="callout-body">{liveError}</span></div> : null}
-          {statusMessage ? <div className="callout callout--success"><span className="callout-title">狀態</span><span className="callout-body">{statusMessage}</span></div> : null}
         </section>
       ) : null}
 
@@ -711,11 +759,20 @@ function TreasurePage({ config }: TreasurePageProps) {
           <div className="modal-panel">
             <div className="section-heading">
               <h2>建立隊伍</h2>
-              <p>建立後會拿到 8 位房間代碼與邀請連結。</p>
+              <p>建立後會拿到 8 位房間代碼與邀請連結，房間有效期 24 小時。</p>
             </div>
+            <label className="field">
+              <span className="field-label">你的暱稱（隊長）</span>
+              <input className="input-text" onChange={(event) => setRealtimeNickname(event.target.value)} placeholder="隊長" type="text" value={realtimeNickname} />
+            </label>
+            <label className="field">
+              <span className="field-label">房間名稱</span>
+              <input className="input-text" onChange={(event) => setRoomName(event.target.value)} placeholder="FF14 藏寶圖隊伍" type="text" value={roomName} />
+            </label>
+            {liveError ? <div className="callout callout--error"><span className="callout-title">建立失敗</span><span className="callout-body">{liveError}</span></div> : null}
             <div className="button-row">
               <button className="button button--primary" disabled={liveBusy} onClick={() => void handleCreateRoom()} type="button">確認建立</button>
-              <button className="button button--ghost" onClick={() => setShowCreateModal(false)} type="button">取消</button>
+              <button className="button button--ghost" onClick={() => { setShowCreateModal(false); setLiveError(null) }} type="button">取消</button>
             </div>
           </div>
         </div>
@@ -729,12 +786,17 @@ function TreasurePage({ config }: TreasurePageProps) {
               <p>請輸入 8 位房間代碼，或使用邀請連結開啟本頁。</p>
             </div>
             <label className="field">
-              <span className="field-label">房間代碼</span>
-              <input className="input-text" onChange={(event) => setRoomCodeInput(event.target.value.toUpperCase())} type="text" value={roomCodeInput} />
+              <span className="field-label">你的暱稱</span>
+              <input className="input-text" onChange={(event) => setRealtimeNickname(event.target.value)} placeholder="隊員" type="text" value={realtimeNickname} />
             </label>
+            <label className="field">
+              <span className="field-label">房間代碼</span>
+              <input className="input-text" onChange={(event) => setRoomCodeInput(event.target.value.toUpperCase())} placeholder="8 位代碼" type="text" value={roomCodeInput} />
+            </label>
+            {liveError ? <div className="callout callout--error"><span className="callout-title">加入失敗</span><span className="callout-body">{liveError}</span></div> : null}
             <div className="button-row">
               <button className="button button--primary" disabled={liveBusy} onClick={() => void handleJoinRoom()} type="button">確認加入</button>
-              <button className="button button--ghost" onClick={() => setShowJoinModal(false)} type="button">取消</button>
+              <button className="button button--ghost" onClick={() => { setShowJoinModal(false); setLiveError(null) }} type="button">取消</button>
             </div>
           </div>
         </div>

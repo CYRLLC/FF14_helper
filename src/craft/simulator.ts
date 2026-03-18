@@ -25,6 +25,17 @@ export type CraftActionId =
   | 'manipulation'
   | 'mastersMend'
   | 'observe'
+  | 'tricksOfTheTrade'
+  | 'refinedTouch'
+  | 'finalAppraisal'
+  | 'trainedEye'
+  | 'heartAndSoul'
+  | 'immaculateMend'
+  | 'trainedPerfection'
+  | 'quickInnovation'
+  | 'rapidSynthesis'
+  | 'hastyTouch'
+  | 'daringTouch'
 
 type CraftActionKind = 'synthesis' | 'touch' | 'buff' | 'repair' | 'utility'
 
@@ -37,6 +48,7 @@ export interface CraftStats {
   craftsmanship: number
   control: number
   cp: number
+  specialist?: boolean
 }
 
 export interface CraftRecipe {
@@ -69,6 +81,10 @@ export interface CraftActionDefinition {
   qualityPotency?: number
   buffDuration?: number
   firstOnly?: boolean
+  /** 動作成功率非 100%（模擬時假設成功）*/
+  probabilistic?: boolean
+  /** 僅限 Specialist 職業使用 */
+  specialistOnly?: boolean
 }
 
 export interface CraftBuffState {
@@ -79,6 +95,18 @@ export interface CraftBuffState {
   manipulation: number
   muscleMemory: number
   observed: boolean
+  /** Final Appraisal 剩餘回合 */
+  finalAppraisal: number
+  /** Heart and Soul 剩餘回合（Specialist 限定）*/
+  heartAndSoul: number
+  /** Heart and Soul 是否已使用（每次製作只能用一次）*/
+  heartAndSoulUsed: boolean
+  /** Trained Perfection 待觸發旗標（下一個消耗耐久的動作免費）*/
+  trainedPerfectionReady: boolean
+  /** Trained Perfection 是否已使用（每次製作只能用一次）*/
+  trainedPerfectionUsed: boolean
+  /** Quick Innovation 是否已使用（每次製作只能用一次，Specialist 限定）*/
+  quickInnovationUsed: boolean
 }
 
 export interface CraftState {
@@ -167,6 +195,17 @@ export const craftActionDefinitions: CraftActionDefinition[] = [
     firstOnly: true,
   },
   {
+    id: 'trainedEye',
+    label: 'Trained Eye',
+    macroName: 'Trained Eye',
+    kind: 'touch',
+    cpCost: 250,
+    durabilityCost: 10,
+    qualityPotency: 0,
+    description: '職等高於配方等級 10 以上時，第一手直接最大化品質。',
+    firstOnly: true,
+  },
+  {
     id: 'veneration',
     label: 'Veneration',
     macroName: 'Veneration',
@@ -175,6 +214,76 @@ export const craftActionDefinitions: CraftActionDefinition[] = [
     durabilityCost: 0,
     buffDuration: 4,
     description: '4 回合內進度技能效率提高。',
+  },
+  {
+    id: 'innovation',
+    label: 'Innovation',
+    macroName: 'Innovation',
+    kind: 'buff',
+    cpCost: 18,
+    durabilityCost: 0,
+    buffDuration: 4,
+    description: '4 回合內品質技能效率提高。',
+  },
+  {
+    id: 'greatStrides',
+    label: 'Great Strides',
+    macroName: 'Great Strides',
+    kind: 'buff',
+    cpCost: 32,
+    durabilityCost: 0,
+    buffDuration: 3,
+    description: '下一個品質技能額外提升。',
+  },
+  {
+    id: 'wasteNot',
+    label: 'Waste Not',
+    macroName: 'Waste Not',
+    kind: 'buff',
+    cpCost: 56,
+    durabilityCost: 0,
+    buffDuration: 4,
+    description: '4 回合內耐久消耗減半。',
+  },
+  {
+    id: 'wasteNotII',
+    label: 'Waste Not II',
+    macroName: 'Waste Not II',
+    kind: 'buff',
+    cpCost: 98,
+    durabilityCost: 0,
+    buffDuration: 8,
+    description: '8 回合內耐久消耗減半。',
+  },
+  {
+    id: 'manipulation',
+    label: 'Manipulation',
+    macroName: 'Manipulation',
+    kind: 'buff',
+    cpCost: 96,
+    durabilityCost: 0,
+    buffDuration: 8,
+    description: '接下來每回合恢復 5 耐久。',
+  },
+  {
+    id: 'finalAppraisal',
+    label: 'Final Appraisal',
+    macroName: 'Final Appraisal',
+    kind: 'buff',
+    cpCost: 1,
+    durabilityCost: 0,
+    buffDuration: 5,
+    description: '5 回合內進度技能到達完工點時，改留 1 點進度未完成，防止提前完工。',
+  },
+  {
+    id: 'quickInnovation',
+    label: 'Quick Innovation',
+    macroName: 'Quick Innovation',
+    kind: 'buff',
+    cpCost: 0,
+    durabilityCost: 0,
+    description: '（Specialist）每次製作限用一次，立即獲得 1 層 Innovation 加成。',
+    specialistOnly: true,
   },
   {
     id: 'basicSynthesis',
@@ -245,27 +354,18 @@ export const craftActionDefinitions: CraftActionDefinition[] = [
     cpCost: 6,
     durabilityCost: 10,
     progressPotency: 400,
-    description: '僅在 Good / Excellent 條件下可用的高爆發進度動作。',
+    description: '僅在 Good / Excellent 條件下可用的高爆發進度動作（Heart and Soul 期間任何條件可用）。',
   },
   {
-    id: 'innovation',
-    label: 'Innovation',
-    macroName: 'Innovation',
-    kind: 'buff',
-    cpCost: 18,
-    durabilityCost: 0,
-    buffDuration: 4,
-    description: '4 回合內品質技能效率提高。',
-  },
-  {
-    id: 'greatStrides',
-    label: 'Great Strides',
-    macroName: 'Great Strides',
-    kind: 'buff',
-    cpCost: 32,
-    durabilityCost: 0,
-    buffDuration: 3,
-    description: '下一個品質技能額外提升。',
+    id: 'rapidSynthesis',
+    label: 'Rapid Synthesis',
+    macroName: 'Rapid Synthesis',
+    kind: 'synthesis',
+    cpCost: 0,
+    durabilityCost: 10,
+    progressPotency: 500,
+    description: '0 CP 高威力進度動作，但有機率失敗（模擬時假設成功）。',
+    probabilistic: true,
   },
   {
     id: 'basicTouch',
@@ -296,6 +396,16 @@ export const craftActionDefinitions: CraftActionDefinition[] = [
     durabilityCost: 10,
     qualityPotency: 150,
     description: 'Standard Touch 後會變成便宜連段。',
+  },
+  {
+    id: 'refinedTouch',
+    label: 'Refined Touch',
+    macroName: 'Refined Touch',
+    kind: 'touch',
+    cpCost: 24,
+    durabilityCost: 10,
+    qualityPotency: 100,
+    description: 'Basic Touch 後使用時，額外多獲得 1 層 Inner Quiet（共 +2 層）。',
   },
   {
     id: 'prudentTouch',
@@ -335,7 +445,7 @@ export const craftActionDefinitions: CraftActionDefinition[] = [
     cpCost: 18,
     durabilityCost: 10,
     qualityPotency: 150,
-    description: '僅在 Good / Excellent 條件下可用，直接增加 2 層 Inner Quiet。',
+    description: '僅在 Good / Excellent 條件下可用，直接增加 2 層 Inner Quiet（Heart and Soul 期間任何條件可用）。',
   },
   {
     id: 'byregotsBlessing',
@@ -358,34 +468,35 @@ export const craftActionDefinitions: CraftActionDefinition[] = [
     description: '需要 10 層 Inner Quiet，0 耐久消耗。',
   },
   {
-    id: 'wasteNot',
-    label: 'Waste Not',
-    macroName: 'Waste Not',
-    kind: 'buff',
-    cpCost: 56,
-    durabilityCost: 0,
-    buffDuration: 4,
-    description: '4 回合內耐久消耗減半。',
+    id: 'hastyTouch',
+    label: 'Hasty Touch',
+    macroName: 'Hasty Touch',
+    kind: 'touch',
+    cpCost: 0,
+    durabilityCost: 10,
+    qualityPotency: 100,
+    description: '0 CP 品質動作，但有機率失敗（模擬時假設成功）。',
+    probabilistic: true,
   },
   {
-    id: 'wasteNotII',
-    label: 'Waste Not II',
-    macroName: 'Waste Not II',
-    kind: 'buff',
-    cpCost: 98,
-    durabilityCost: 0,
-    buffDuration: 8,
-    description: '8 回合內耐久消耗減半。',
+    id: 'daringTouch',
+    label: 'Daring Touch',
+    macroName: 'Daring Touch',
+    kind: 'touch',
+    cpCost: 0,
+    durabilityCost: 10,
+    qualityPotency: 150,
+    description: 'Hasty Touch 成功後或 Heart and Soul 期間可用，機率技（模擬時假設成功）。',
+    probabilistic: true,
   },
   {
-    id: 'manipulation',
-    label: 'Manipulation',
-    macroName: 'Manipulation',
-    kind: 'buff',
-    cpCost: 96,
+    id: 'tricksOfTheTrade',
+    label: 'Tricks of the Trade',
+    macroName: 'Tricks of the Trade',
+    kind: 'utility',
+    cpCost: 0,
     durabilityCost: 0,
-    buffDuration: 8,
-    description: '接下來每回合恢復 5 耐久。',
+    description: 'Good / Excellent 條件下使用，恢復 20 CP（Heart and Soul 期間任何條件可用）。',
   },
   {
     id: 'mastersMend',
@@ -397,6 +508,26 @@ export const craftActionDefinitions: CraftActionDefinition[] = [
     description: '立即恢復 30 耐久。',
   },
   {
+    id: 'immaculateMend',
+    label: 'Immaculate Mend',
+    macroName: 'Immaculate Mend',
+    kind: 'repair',
+    cpCost: 0,
+    durabilityCost: 0,
+    description: '（Specialist）立即將耐久恢復至最大值。',
+    specialistOnly: true,
+  },
+  {
+    id: 'trainedPerfection',
+    label: 'Trained Perfection',
+    macroName: 'Trained Perfection',
+    kind: 'utility',
+    cpCost: 0,
+    durabilityCost: 0,
+    description: '（Specialist）每次製作限用一次，下一個消耗耐久的動作不消耗耐久。',
+    specialistOnly: true,
+  },
+  {
     id: 'observe',
     label: 'Observe',
     macroName: 'Observe',
@@ -405,33 +536,50 @@ export const craftActionDefinitions: CraftActionDefinition[] = [
     durabilityCost: 0,
     description: '等待一回合，讓 Focused 系列動作可用。',
   },
+  {
+    id: 'heartAndSoul',
+    label: 'Heart and Soul',
+    macroName: 'Heart and Soul',
+    kind: 'buff',
+    cpCost: 0,
+    durabilityCost: 0,
+    buffDuration: 1,
+    description: '（Specialist）每次製作限用一次，下一個動作可忽略 Good / Excellent 條件限制。',
+    specialistOnly: true,
+  },
 ]
 
 const solverActionPriority: CraftActionId[] = [
+  'trainedEye',
   'muscleMemory',
   'reflect',
   'veneration',
   'innovation',
+  'finalAppraisal',
   'wasteNotII',
   'wasteNot',
   'manipulation',
   'groundwork',
   'carefulSynthesis',
+  'rapidSynthesis',
   'basicSynthesis',
   'prudentSynthesis',
   'focusedSynthesis',
   'intensiveSynthesis',
   'greatStrides',
   'preparatoryTouch',
+  'refinedTouch',
   'focusedTouch',
   'basicTouch',
   'standardTouch',
   'advancedTouch',
   'prudentTouch',
   'preciseTouch',
+  'tricksOfTheTrade',
   'delicateSynthesis',
   'trainedFinesse',
   'byregotsBlessing',
+  'immaculateMend',
   'mastersMend',
   'observe',
 ]
@@ -556,6 +704,12 @@ function createInitialBuffs(): CraftBuffState {
     manipulation: 0,
     muscleMemory: 0,
     observed: false,
+    finalAppraisal: 0,
+    heartAndSoul: 0,
+    heartAndSoulUsed: false,
+    trainedPerfectionReady: false,
+    trainedPerfectionUsed: false,
+    quickInnovationUsed: false,
   }
 }
 
@@ -591,11 +745,26 @@ function decrementBuffs(buffs: CraftBuffState): CraftBuffState {
     manipulation: Math.max(0, buffs.manipulation - 1),
     muscleMemory: Math.max(0, buffs.muscleMemory - 1),
     observed: false,
+    finalAppraisal: Math.max(0, buffs.finalAppraisal - 1),
+    heartAndSoul: Math.max(0, buffs.heartAndSoul - 1),
+    // 以下為永久旗標，decrementBuffs 不修改
+    heartAndSoulUsed: buffs.heartAndSoulUsed,
+    trainedPerfectionReady: buffs.trainedPerfectionReady,
+    trainedPerfectionUsed: buffs.trainedPerfectionUsed,
+    quickInnovationUsed: buffs.quickInnovationUsed,
   }
+}
+
+function isConditionGatedAction(actionId: CraftActionId): boolean {
+  return actionId === 'intensiveSynthesis' || actionId === 'preciseTouch' || actionId === 'tricksOfTheTrade' || actionId === 'daringTouch'
 }
 
 function getAdjustedDurabilityCost(action: CraftActionDefinition, state: CraftState): number {
   if (action.durabilityCost === 0) {
+    return 0
+  }
+
+  if (state.buffs.trainedPerfectionReady) {
     return 0
   }
 
@@ -634,13 +803,21 @@ function buildInvalidResult(action: CraftActionDefinition, state: CraftState, no
   }
 }
 
-function validateAction(action: CraftActionDefinition, state: CraftState): string | null {
+function validateAction(action: CraftActionDefinition, state: CraftState, stats: CraftStats, recipe: CraftRecipe): string | null {
   if (state.status !== 'running') {
     return '製作已經結束，不能再追加動作。'
   }
 
+  if (action.specialistOnly && !stats.specialist) {
+    return `${action.label} 只能由 Specialist 職業使用。`
+  }
+
   if (action.firstOnly && state.step > 0) {
     return `${action.label} 只能在第一手使用。`
+  }
+
+  if (action.id === 'trainedEye' && stats.level < recipe.level + 10) {
+    return `Trained Eye 需要職等（${stats.level}）至少比配方等級（${recipe.level}）高 10 級。`
   }
 
   if (action.id === 'byregotsBlessing' && state.innerQuiet === 0) {
@@ -659,8 +836,33 @@ function validateAction(action: CraftActionDefinition, state: CraftState): strin
     return 'Prudent 系列動作在 Waste Not 期間不可用。'
   }
 
-  if ((action.id === 'intensiveSynthesis' || action.id === 'preciseTouch') && !['good', 'excellent'].includes(state.condition)) {
-    return `${action.label} 只會在 Good / Excellent 條件下成立。`
+  const conditionAllowed = state.buffs.heartAndSoul > 0 || state.condition === 'good' || state.condition === 'excellent'
+  if ((action.id === 'intensiveSynthesis' || action.id === 'preciseTouch') && !conditionAllowed) {
+    return `${action.label} 只會在 Good / Excellent 條件下成立（或 Heart and Soul 期間）。`
+  }
+
+  if (action.id === 'tricksOfTheTrade' && !conditionAllowed) {
+    return 'Tricks of the Trade 需要 Good / Excellent 條件（或 Heart and Soul 期間）。'
+  }
+
+  if (action.id === 'daringTouch' && state.lastActionId !== 'hastyTouch' && state.buffs.heartAndSoul === 0) {
+    return 'Daring Touch 必須接在 Hasty Touch 之後，或在 Heart and Soul 期間使用。'
+  }
+
+  if (action.id === 'heartAndSoul' && state.buffs.heartAndSoulUsed) {
+    return 'Heart and Soul 每次製作只能使用一次。'
+  }
+
+  if (action.id === 'trainedPerfection' && state.buffs.trainedPerfectionUsed) {
+    return 'Trained Perfection 每次製作只能使用一次。'
+  }
+
+  if (action.id === 'quickInnovation' && state.buffs.quickInnovationUsed) {
+    return 'Quick Innovation 每次製作只能使用一次。'
+  }
+
+  if (action.id === 'finalAppraisal' && state.buffs.finalAppraisal > 0) {
+    return 'Final Appraisal 已在生效中。'
   }
 
   return null
@@ -674,7 +876,7 @@ function simulateAction(
   options: CraftSimulationOptions = {},
 ): CraftSimulationStep {
   const action = getActionById(actionId)
-  const validationError = validateAction(action, state)
+  const validationError = validateAction(action, state, stats, recipe)
   if (validationError) {
     return buildInvalidResult(action, state, validationError)
   }
@@ -686,7 +888,7 @@ function simulateAction(
     return buildInvalidResult(action, state, 'CP 不足，無法使用這個動作。')
   }
 
-  if (state.durability < durabilityCost) {
+  if (state.durability < durabilityCost && durabilityCost > 0) {
     return buildInvalidResult(action, state, '耐久不足，無法使用這個動作。')
   }
 
@@ -703,15 +905,43 @@ function simulateAction(
   let qualityGain = 0
   let note: string | null = null
 
+  if (action.probabilistic) {
+    note = '機率技能（模擬假設成功）。'
+  }
+
+  // ── 修復類 ────────────────────────────────────────────────────────────
   if (action.id === 'mastersMend') {
     nextState.durability = Math.min(recipe.durability, nextState.durability + 30)
   }
 
+  if (action.id === 'immaculateMend') {
+    nextState.durability = recipe.durability
+  }
+
+  // ── Trained Perfection 消耗 ───────────────────────────────────────────
+  if (state.buffs.trainedPerfectionReady && action.durabilityCost > 0) {
+    nextState.buffs.trainedPerfectionReady = false
+    note = note ? `${note} Trained Perfection 觸發，本動作耐久免費。` : 'Trained Perfection 觸發，本動作耐久免費。'
+  }
+
+  // ── Utility 類 ────────────────────────────────────────────────────────
   if (action.id === 'observe') {
     nextState.buffs.observed = true
     note = '下一手可以接 Focused 系列動作。'
   }
 
+  if (action.id === 'tricksOfTheTrade') {
+    nextState.cp = Math.min(stats.cp, nextState.cp + 20)
+    note = 'CP +20。'
+  }
+
+  if (action.id === 'trainedPerfection') {
+    nextState.buffs.trainedPerfectionReady = true
+    nextState.buffs.trainedPerfectionUsed = true
+    note = '下一個消耗耐久的動作免費。'
+  }
+
+  // ── Buff 類 ───────────────────────────────────────────────────────────
   if (action.id === 'veneration') {
     nextState.buffs.veneration = (action.buffDuration ?? 0) + 1
   }
@@ -736,13 +966,35 @@ function simulateAction(
     nextState.buffs.muscleMemory = 6
   }
 
+  if (action.id === 'finalAppraisal') {
+    nextState.buffs.finalAppraisal = (action.buffDuration ?? 0) + 1
+  }
+
+  if (action.id === 'heartAndSoul') {
+    nextState.buffs.heartAndSoul = (action.buffDuration ?? 0) + 1
+    nextState.buffs.heartAndSoulUsed = true
+  }
+
+  if (action.id === 'quickInnovation') {
+    // 立即給 1 層 Innovation（設為 2：decrement 後為 1，下一個動作生效，之後歸零）
+    nextState.buffs.innovation = Math.max(nextState.buffs.innovation, 2)
+    nextState.buffs.quickInnovationUsed = true
+    note = 'Innovation +1 層（本次 Quick Innovation）。'
+  }
+
+  // ── Heart and Soul 消耗（條件限定技能使用後）────────────────────────
+  if (state.buffs.heartAndSoul > 0 && isConditionGatedAction(action.id)) {
+    nextState.buffs.heartAndSoul = 0
+  }
+
+  // ── 進度計算 ──────────────────────────────────────────────────────────
   if ((action.progressPotency ?? 0) > 0) {
     const baseProgress = getBaseProgress(stats, recipe)
     let potency = action.progressPotency ?? 0
 
     if (action.id === 'groundwork' && state.durability < action.durabilityCost) {
       potency = Math.floor(potency / 2)
-      note = 'Groundwork 因原始耐久不足而觸發半效。'
+      note = note ? `${note} Groundwork 因原始耐久不足而觸發半效。` : 'Groundwork 因原始耐久不足而觸發半效。'
     }
 
     let multiplier = recipe.progressModifier / 100
@@ -752,10 +1004,18 @@ function simulateAction(
 
     if (state.buffs.muscleMemory > 0 && action.id !== 'muscleMemory') {
       multiplier *= 2
-      note = note ? `${note} 同時套用 Muscle Memory。` : '套用 Muscle Memory 加成。'
+      note = note ? `${note} 套用 Muscle Memory 加成。` : '套用 Muscle Memory 加成。'
     }
 
     progressGain = Math.floor(baseProgress * (potency / 100) * multiplier)
+
+    // Final Appraisal：防止進度到達完工值
+    if (state.buffs.finalAppraisal > 0 && nextState.progress + progressGain >= recipe.difficulty) {
+      progressGain = Math.max(0, recipe.difficulty - 1 - nextState.progress)
+      nextState.buffs.finalAppraisal = 0
+      note = note ? `${note} Final Appraisal 觸發，進度保留 1 點。` : 'Final Appraisal 觸發，進度保留 1 點。'
+    }
+
     nextState.progress = clamp(nextState.progress + progressGain, 0, recipe.difficulty)
 
     if (action.id !== 'muscleMemory') {
@@ -763,7 +1023,14 @@ function simulateAction(
     }
   }
 
-  if ((action.qualityPotency ?? 0) > 0) {
+  // ── 品質計算 ──────────────────────────────────────────────────────────
+  if (action.id === 'trainedEye') {
+    // 直接最大化品質，不走一般計算路徑
+    qualityGain = recipe.quality - state.quality
+    nextState.quality = recipe.quality
+    nextState.innerQuiet = Math.min(MAX_INNER_QUIET, nextState.innerQuiet + 1)
+    note = '職等遠超配方，直接最大化品質。'
+  } else if ((action.qualityPotency ?? 0) > 0) {
     const baseQuality = getBaseQuality(stats, recipe)
     let potency = action.qualityPotency ?? 0
 
@@ -785,8 +1052,17 @@ function simulateAction(
     qualityGain = Math.floor(baseQuality * (potency / 100) * multiplier)
     nextState.quality = clamp(nextState.quality + qualityGain, 0, recipe.quality)
 
-    if (action.id === 'reflect' || action.id === 'preparatoryTouch' || action.id === 'preciseTouch') {
+    // Inner Quiet 堆疊
+    if (action.id === 'reflect' || action.id === 'preparatoryTouch') {
       nextState.innerQuiet = Math.min(MAX_INNER_QUIET, nextState.innerQuiet + 2)
+    } else if (action.id === 'preciseTouch') {
+      nextState.innerQuiet = Math.min(MAX_INNER_QUIET, nextState.innerQuiet + 2)
+    } else if (action.id === 'refinedTouch') {
+      const bonus = state.lastActionId === 'basicTouch' ? 2 : 1
+      nextState.innerQuiet = Math.min(MAX_INNER_QUIET, nextState.innerQuiet + bonus)
+      if (bonus === 2) {
+        note = note ? `${note} Refined Touch 連段加成，+2 IQ。` : 'Refined Touch 連段加成，+2 IQ。'
+      }
     } else if (action.id === 'byregotsBlessing') {
       nextState.innerQuiet = 0
     } else if (action.id !== 'trainedFinesse') {
@@ -798,13 +1074,16 @@ function simulateAction(
     }
   }
 
+  // ── Manipulation 每步恢復耐久 ─────────────────────────────────────────
   if (state.buffs.manipulation > 0 && action.id !== 'manipulation') {
     nextState.durability = Math.min(recipe.durability, nextState.durability + 5)
   }
 
+  // ── Buff 倒計時 ───────────────────────────────────────────────────────
   nextState.buffs = decrementBuffs(nextState.buffs)
   nextState.condition = getNextCondition(state.condition, nextState.step, options.conditionMode ?? 'normal')
 
+  // ── 結束判定 ──────────────────────────────────────────────────────────
   if (nextState.progress >= recipe.difficulty) {
     nextState.status = 'completed'
   } else if (nextState.durability <= 0) {
@@ -871,6 +1150,9 @@ function createStateBucketKey(state: CraftState): string {
     state.buffs.wasteNot > 0 ? 1 : 0,
     state.buffs.manipulation > 0 ? 1 : 0,
     state.buffs.muscleMemory > 0 ? 1 : 0,
+    state.buffs.finalAppraisal > 0 ? 1 : 0,
+    state.buffs.heartAndSoul > 0 ? 1 : 0,
+    state.buffs.trainedPerfectionReady ? 1 : 0,
     state.condition,
   ].join('|')
 }
@@ -1043,6 +1325,7 @@ export function createDefaultCraftStats(): CraftStats {
     craftsmanship: 4780,
     control: 4500,
     cp: 560,
+    specialist: false,
   }
 }
 

@@ -127,7 +127,7 @@ function App() {
                 <Route element={<CraftPage />} path="/craft" />
                 <Route element={<CollectionPage />} path="/collection" />
                 <Route element={<ToolsPage />} path="/tools" />
-                <Route element={<AboutPage config={config} />} path="/about" />
+                <Route element={<AboutPage />} path="/about" />
                 <Route element={<SyncPage />} path="/sync" />
                 <Route element={<LabPage />} path="/lab" />
               </Routes>

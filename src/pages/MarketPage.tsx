@@ -332,6 +332,12 @@ function MarketPage() {
     pushActivity('已移除一筆資料。')
   }
 
+  function clearWorkbook(): void {
+    setRows([])
+    setCalculatorRowId(null)
+    pushActivity('已清空工作表。')
+  }
+
   function applyRowToCalculator(row: MarketWorkbookRow): void {
     const comparison = compareTwServerPrices([
       { serverName: '陸行鳥', pricePerUnit: row.chocoboPrice, quantity: row.quantity },
@@ -387,6 +393,16 @@ function MarketPage() {
           <span className="badge">OCR 匯入</span>
           <span className="badge badge--warning">價格資料以你的截圖與手動整理為準</span>
         </div>
+        {rows.length === 0 && latestImport === null ? (
+          <div className="callout">
+            <span className="callout-title">第一次使用？快速上手三步驟</span>
+            <span className="callout-body">
+              ① 在「步驟 1」選好伺服器，貼上或拖入市場板截圖。
+              ② 在「步驟 2」確認 OCR 辨識結果，有錯直接改，再按「寫入工作表」。
+              ③ 在「步驟 3」看陸行鳥 / 莫古力比價，點「帶入試算」算出淨利。
+            </span>
+          </div>
+        ) : null}
       </section>
 
       <section className="page-card">
@@ -704,6 +720,21 @@ function MarketPage() {
           {searchQuery.trim() ? <span className="badge badge--positive">搜尋：{searchQuery.trim()}</span> : null}
           {tableFilter !== 'all' ? <span className="badge badge--warning">篩選：{filterLabel(tableFilter)}</span> : null}
         </div>
+        {rows.length > 0 ? (
+          <div className="button-row">
+            <button
+              className="button button--ghost"
+              onClick={() => {
+                if (window.confirm(`確定要清空全部 ${rows.length} 筆資料嗎？`)) {
+                  clearWorkbook()
+                }
+              }}
+              type="button"
+            >
+              清空全部
+            </button>
+          </div>
+        ) : null}
 
         {rows.length === 0 ? (
           <div className="empty-state">
