@@ -171,6 +171,21 @@ export interface CraftSolverResult {
 
 const MAX_INNER_QUIET = 10
 
+/** FFXIV 標準 HQ 機率表（索引 0–90 對應品質 0–90%，之後視為 100%） */
+const hqProbTable = [
+  1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5,
+  5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14, 15,
+  15, 16, 17, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 33, 35, 36, 38,
+  40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 61, 63, 65, 68, 71, 74, 77, 80, 83, 86,
+  89, 92, 94, 95, 96, 97, 98, 99, 99, 99, 100,
+]
+
+function calcHqPercent(qualityPercent: number): number {
+  if (qualityPercent >= 100) return 100
+  if (qualityPercent <= 0) return 0
+  return hqProbTable[Math.min(90, Math.floor(qualityPercent))]
+}
+
 export const craftActionDefinitions: CraftActionDefinition[] = [
   {
     id: 'reflect',
@@ -1124,7 +1139,7 @@ export function simulateCraft(
   const finalState = currentState
   const completionPercent = recipe.difficulty === 0 ? 100 : Math.min(100, Math.round((finalState.progress / recipe.difficulty) * 100))
   const qualityPercent = recipe.quality === 0 ? 0 : Math.min(100, Math.round((finalState.quality / recipe.quality) * 100))
-  const hqPercent = recipe.canHq === false ? 0 : qualityPercent
+  const hqPercent = recipe.canHq === false ? 0 : calcHqPercent(qualityPercent)
 
   return {
     initialState,
@@ -1282,16 +1297,66 @@ export function solveCraftSequence(
   }
 }
 
-export function buildMacroChunks(sequence: CraftActionId[]): string[][] {
-  const lines = sequence.map((actionId) => {
-    const action = getActionById(actionId)
-    const wait = action.kind === 'buff' ? 2 : 3
-    return `/ac "${action.macroName}" <wait.${wait}>`
-  })
+/** 繁中伺服器 FFXIV 客戶端技能指令名稱（巨集使用）*/
+const macroNameZhTW: Record<CraftActionId, string> = {
+  reflect: '閒靜',
+  muscleMemory: '堅信',
+  veneration: '崇敬',
+  basicSynthesis: '製作',
+  carefulSynthesis: '模範製作',
+  groundwork: '坯料製作',
+  prudentSynthesis: '儉約製作',
+  delicateSynthesis: '精密製作',
+  focusedSynthesis: '專心製作',
+  intensiveSynthesis: '集中製作',
+  innovation: '改革',
+  greatStrides: '闊步',
+  basicTouch: '加工',
+  standardTouch: '中級加工',
+  advancedTouch: '上級加工',
+  prudentTouch: '儉約加工',
+  preparatoryTouch: '坯料加工',
+  focusedTouch: '專心加工',
+  preciseTouch: '集中加工',
+  byregotsBlessing: '比爾格的祝福',
+  trainedFinesse: '工匠的神技',
+  wasteNot: '儉約',
+  wasteNotII: '長期儉約',
+  manipulation: '掌握',
+  mastersMend: '精修',
+  observe: '觀察',
+  tricksOfTheTrade: '秘訣',
+  refinedTouch: '精煉加工',
+  finalAppraisal: '最終確認',
+  trainedEye: '工匠的神速技巧',
+  heartAndSoul: '專心致志',
+  immaculateMend: '巧奪天工',
+  trainedPerfection: '工匠的絕技',
+  quickInnovation: '快速改革',
+  rapidSynthesis: '高速製作',
+  hastyTouch: '倉促',
+  // 冒進在巨集中以倉促觸發（與 BestCraft 一致）
+  daringTouch: '倉促',
+}
 
+function getMacroWait(actionId: CraftActionId): number {
+  // HeartAndSoul / QuickInnovation 雖是 buff 類但動作時間為 2.17s → wait.3
+  if (actionId === 'heartAndSoul' || actionId === 'quickInnovation') return 3
+  return getActionById(actionId).kind === 'buff' ? 2 : 3
+}
+
+export function buildMacroChunks(sequence: CraftActionId[]): string[][] {
+  if (sequence.length === 0) return []
+  // 每段最多 14 個動作行 + 1 完成通知行 = 15 行（與 BestCraft 一致）
+  const ACTIONS_PER_CHUNK = 14
   const chunks: string[][] = []
-  for (let index = 0; index < lines.length; index += 15) {
-    chunks.push(lines.slice(index, index + 15))
+  const totalChunks = Math.ceil(sequence.length / ACTIONS_PER_CHUNK)
+
+  for (let i = 0; i < totalChunks; i++) {
+    const slice = sequence.slice(i * ACTIONS_PER_CHUNK, (i + 1) * ACTIONS_PER_CHUNK)
+    const lines = slice.map((actionId) => `/ac ${macroNameZhTW[actionId]} <wait.${getMacroWait(actionId)}>`)
+    lines.push(`/e 巨集 #${i + 1} 已完成！<se.1>`)
+    chunks.push(lines)
   }
 
   return chunks
@@ -1312,6 +1377,9 @@ export function parseMacroText(rawValue: string): CraftActionId[] {
     nameMap.set(action.label, action.id)
     nameMap.set(action.macroName, action.id)
     nameMap.set(action.id, action.id)
+    // 僅在名稱未被先前條目佔用時才設定（避免 daringTouch 覆蓋 hastyTouch 的共用名「倉促」）
+    const zhName = macroNameZhTW[action.id]
+    if (!nameMap.has(zhName)) nameMap.set(zhName, action.id)
   }
 
   return matches

@@ -276,6 +276,7 @@ function CraftPage() {
   const [conditionMode, setConditionMode] = useState<CraftConditionMode>(savedState.conditionMode)
   const [solverObjective, setSolverObjective] = useState<CraftSolverObjective>(savedState.solverObjective)
   const [taskFilter, setTaskFilter] = useState<TaskFilter>(savedState.taskFilter)
+  const [taskSearchQuery, setTaskSearchQuery] = useState('')
   const [actionQuery, setActionQuery] = useState('')
   const [paletteFilter, setPaletteFilter] = useState<ActionPaletteFilter>('all')
   const [message, setMessage] = useState<string | null>(null)
@@ -347,22 +348,25 @@ function CraftPage() {
   }, [sequence.length, simulation.completionPercent, simulation.qualityPercent])
   const recipeJobId = useMemo(() => mapCraftTypeNameToJobId(recipe.jobName), [recipe.jobName])
   const recipeJobMismatch = recipeJobId ? recipeJobId !== currentJob : false
-  const relevantTasks = useMemo(
-    () =>
-      collectionEntries.filter((entry) => {
+  const relevantTasks = useMemo(() => {
+    const keyword = taskSearchQuery.trim().toLocaleLowerCase('zh-TW')
+    return collectionEntries.filter((entry) => {
+      const categoryMatch = (() => {
         switch (taskFilter) {
-          case 'custom':
-            return entry.category === 'custom-deliveries'
-          case 'tribe-craft':
-            return entry.category === 'allied-societies' && entry.supportRoles.includes('crafting')
-          case 'tribe-gather':
-            return entry.category === 'allied-societies' && entry.supportRoles.includes('gathering')
-          default:
-            return entry.category === 'custom-deliveries' || entry.supportRoles.includes('crafting') || entry.supportRoles.includes('gathering')
+          case 'custom': return entry.category === 'custom-deliveries'
+          case 'tribe-craft': return entry.category === 'allied-societies' && entry.supportRoles.includes('crafting')
+          case 'tribe-gather': return entry.category === 'allied-societies' && entry.supportRoles.includes('gathering')
+          default: return entry.category === 'custom-deliveries' || entry.supportRoles.includes('crafting') || entry.supportRoles.includes('gathering')
         }
-      }),
-    [taskFilter],
-  )
+      })()
+      if (!categoryMatch) return false
+      if (!keyword) return true
+      return [entry.name, entry.location, entry.unlockSummary, ...entry.rewardSummary]
+        .join(' ')
+        .toLocaleLowerCase('zh-TW')
+        .includes(keyword)
+    })
+  }, [taskFilter, taskSearchQuery])
 
   function updateStats<K extends keyof CraftStats>(key: K, value: CraftStats[K]): void {
     setStats((current) => {
@@ -969,12 +973,19 @@ function CraftPage() {
             <h2>相關任務清單</h2>
             <p>如果你正在排老主顧或友好部落，也可以在這裡快速切換到對應追蹤內容。</p>
           </div>
+          <label className="field">
+            <span className="field-label">快速搜尋任務</span>
+            <input className="input-text" onChange={(event) => setTaskSearchQuery(event.target.value)} placeholder="輸入名稱、地點或說明關鍵字" type="text" value={taskSearchQuery} />
+          </label>
           <div className="choice-row">
             <button className={taskFilter === 'all' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('all')} type="button">全部相關</button>
             <button className={taskFilter === 'custom' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('custom')} type="button">老主顧</button>
             <button className={taskFilter === 'tribe-craft' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('tribe-craft')} type="button">友好部落 / 製作</button>
             <button className={taskFilter === 'tribe-gather' ? 'choice-button choice-button--active' : 'choice-button'} onClick={() => setTaskFilter('tribe-gather')} type="button">友好部落 / 採集</button>
           </div>
+          {relevantTasks.length === 0 ? (
+            <div className="empty-state"><strong>沒有符合的任務</strong><p>試著清除關鍵字或換個篩選條件。</p></div>
+          ) : null}
           <div className="history-list">
             {relevantTasks.map((entry) => (
               <article key={entry.id} className="history-item">
