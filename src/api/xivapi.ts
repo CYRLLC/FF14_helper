@@ -95,13 +95,13 @@ function getNestedBoolean(value: unknown, path: string[]): boolean | null {
   return typeof current === 'boolean' ? current : null
 }
 
-function buildSearchParams(sheet: XivapiSheet, field: string, query: string, limit: number): URLSearchParams {
+function buildSearchParams(sheet: XivapiSheet, field: string, query: string, limit: number, language: 'en' | 'chs' = 'en'): URLSearchParams {
   return new URLSearchParams({
     sheets: sheet,
     fields: field,
     query,
     limit: clampLimit(limit).toString(),
-    language: 'en',
+    language,
   })
 }
 
@@ -125,13 +125,14 @@ export function buildXivapiSheetRowUrl(sheet: XivapiSheet, rowId: number, fields
   return `${XIVAPI_SHEET_URL}/${sheet}/${Math.max(0, Math.round(rowId))}?${params.toString()}`
 }
 
-export async function searchXivapi(term: string, sheet: XivapiSheet, limit = 8): Promise<XivapiSearchResult[]> {
+export async function searchXivapi(term: string, sheet: XivapiSheet, limit = 8, language: 'en' | 'chs' = 'en'): Promise<XivapiSearchResult[]> {
   const trimmedTerm = term.trim()
   if (trimmedTerm.length < 2) {
     return []
   }
 
-  const response = await fetch(buildXivapiSearchUrl(trimmedTerm, sheet, limit))
+  const params = buildSearchParams(sheet, 'Name', `Name~"${sanitizeTerm(trimmedTerm)}"`, limit, language)
+  const response = await fetch(`${XIVAPI_SEARCH_URL}?${params.toString()}`)
   if (!response.ok) {
     throw new Error(`XIVAPI request failed with HTTP ${response.status}.`)
   }

@@ -84,6 +84,28 @@ export function extractRowsFromOcrText(rawText: string): MarketOcrParsedRow[] {
     })
 }
 
+/** 從任意截圖 OCR 文字中提取潛在道具名稱清單（非市場板格式）*/
+export function extractNamesFromOcrText(rawText: string): string[] {
+  const seen = new Set<string>()
+  return rawText
+    .split(/\r?\n/gu)
+    .map((line) =>
+      normalizeOcrLine(line)
+        .replace(/^\d[\d,.\s]*/u, '')       // 移除行首數字（編號、價格）
+        .replace(/\s*[x×]?\s*\d+\s*$/u, '') // 移除行尾數量 "x5" 或純數字
+        .trim(),
+    )
+    .filter((line) => {
+      if (line.length < 2 || line.length > 60) return false
+      // 必須包含 CJK 字元或至少兩個連續英文字母
+      if (!/[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]|[a-zA-Z]{2,}/u.test(line)) return false
+      const key = line.toLocaleLowerCase('zh-TW')
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
 export function applyOcrRowsToWorkbook(options: {
   existingRows: MarketWorkbookRow[]
   parsedRows: MarketOcrParsedRow[]
