@@ -1,6 +1,6 @@
 # FF14 Helper — 模組狀態總覽
 
-最後更新：2026-03-19
+最後更新：2026-03-19（v3.7）
 文件性質：模組實作現況、與參考來源的差距、優先工作項目
 **使用方式：給 Claude 關鍵字（例如「製作頁」「BestCraft」「solver」「查價」「OCR」「藏寶圖」「收藏」「金碟」）即可定位對應章節。**
 
@@ -51,7 +51,7 @@
 | **Conditions（11 種製作狀態）** | ✅ Good/Excellent/Poor/Centered/Sturdy/Pliant/Malleable/Primed/GoodOmen/Robust | ✅ v3.6 完成（效果全實作，goodOmen 轉換邏輯完成） | — |
 | **每步模擬明細視圖** | ✅ | ✅ v3.6 完成（Tab 3 逐步表格，含條件/增量/備註） | — |
 | **隨機技能失敗追蹤**（RapidSynthesisFail、HastyTouchFail、DaringTouchFail） | ✅ | ❌ 未追蹤 | 🟡 中 |
-| **Combo 連擊系統**（BasicTouch→StandardTouch→AdvancedTouch） | ✅ | ⚠️ 部分（未驗證完整） | 🔴 高 |
+| **Combo 連擊系統**（BasicTouch→StandardTouch→AdvancedTouch） | ✅ | ✅ v3.7 完成（observed flag 修正，Focused 系列動作現已可正確觸發） | — |
 | **Specialist 技能**（heart_and_soul, trained_perfection, quick_innovation） | ✅ | ⚠️ 部分 | 🟡 中 |
 | **StellarSteadyHand（7.4+ 技能）** | ✅ | ❌ 未實作 | 🟡 中 |
 | **ImmaculateMend（7.0+ 技能）** | ✅ | ❌ 未實作 | 🟡 中 |
@@ -116,7 +116,7 @@
 
 | 功能 | 優先度 | 說明 |
 |------|--------|------|
-| OCR 校對體驗強化（逐列刪除、批次確認） | 🔴 高 | 目前校對 UX 偏弱 |
+| OCR 校對體驗強化（逐列刪除、批次確認） | ✅ v3.7 | checkbox 全選/全消/刪除未勾選，寫入只寫勾選列 |
 | 道具查詢結果快取（避免重複查） | 🟡 中 | 目前每次都重查 |
 | 常用材料模板 | 🟡 中 | 快速帶入常見製作材料 |
 | 工作表排序（依差價/依名稱） | 🟡 中 | |
@@ -232,14 +232,14 @@
 
 | Tab | 計劃 | 狀態 |
 |-----|------|------|
-| 時段概覽 | 當前 GATE / 倒數 | ❌ 未遷移 |
-| GATE 預測 | 候選分析/說明 | ❌ 未遷移 |
+| 時段概覽 | 當前 GATE / 倒數 + 12 時段清單 | ✅ v3.7 完成 |
+| GATE 預測 | 候選分析/說明/活動清單 | ✅ v3.7 完成 |
 
 ### 待補項目
 
 | 功能 | 優先度 | 說明 |
 |------|--------|------|
-| **Tab 架構遷移**（時段概覽/GATE 預測） | 🟡 中 | Blueprint Phase 6 |
+| **Tab 架構遷移**（時段概覽/GATE 預測） | ✅ v3.7 | Blueprint Phase 6 完成 |
 | 預測模型改進 | 🟡 中 | 目前 hash-based，可靠度待驗證 |
 | 活動分類與重點提示 | 🟠 低 | |
 
@@ -321,7 +321,7 @@
 | Phase 3 | MarketPage（4 Tab） | ✅ 完成 v3.5 |
 | Phase 4 | CollectionPage（3 Tab） | ✅ 完成 v3.6 |
 | Phase 5 | TreasurePage（2 Tab） | ✅ 完成 v3.6 |
-| Phase 6 | GoldSaucerPage（2 Tab） | ❌ 未開始 |
+| Phase 6 | GoldSaucerPage（2 Tab） | ✅ 完成 v3.7 |
 
 ---
 
