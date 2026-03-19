@@ -15,6 +15,7 @@ import {
   solveCraftSequence,
   type CraftActionDefinition,
   type CraftActionId,
+  type CraftCondition,
   type CraftConditionMode,
   type CraftRecipe,
   type CraftSolverObjective,
@@ -224,6 +225,22 @@ function formatSupportRole(role: string): string {
 
 function formatConditionMode(mode: CraftConditionMode): string {
   return mode === 'favorable' ? '優良條件循環' : '一般條件循環'
+}
+
+function formatConditionLabel(condition: CraftCondition): string {
+  switch (condition) {
+    case 'good': return '高品質'
+    case 'excellent': return '最高品質'
+    case 'poor': return '低品質'
+    case 'centered': return '安定'
+    case 'sturdy': return '結実'
+    case 'pliant': return '柔軟'
+    case 'malleable': return '強固'
+    case 'primed': return '備蓄'
+    case 'goodOmen': return '前兆'
+    case 'robust': return '堅固'
+    default: return '一般'
+  }
 }
 
 function formatStatus(status: 'running' | 'completed' | 'broken'): string {
@@ -943,26 +960,83 @@ function CraftPage() {
                 </button>
               </div>
             ) : (
-              <div className="history-list">
-                {macroChunks.map((chunk, index) => {
-                  const value = chunk.join('\n')
-                  const label = `macro-${index}`
-                  return (
-                    <article key={label} className="history-item">
-                      <div className="history-item__top">
-                        <strong>Macro {index + 1}</strong>
-                        <span className="badge">{chunk.length} 行</span>
-                      </div>
-                      <pre className="muted" style={{ whiteSpace: 'pre-wrap' }}><code>{value}</code></pre>
-                      <div className="button-row">
-                        <button className="button button--primary" onClick={() => void handleCopy(label, value)} type="button">
-                          {copiedLabel === label ? '已複製' : '複製這段 Macro'}
-                        </button>
-                      </div>
-                    </article>
-                  )
-                })}
-              </div>
+              <>
+                <div className="history-list">
+                  {macroChunks.map((chunk, index) => {
+                    const value = chunk.join('\n')
+                    const label = `macro-${index}`
+                    return (
+                      <article key={label} className="history-item">
+                        <div className="history-item__top">
+                          <strong>Macro {index + 1}</strong>
+                          <span className="badge">{chunk.length} 行</span>
+                        </div>
+                        <pre className="muted" style={{ whiteSpace: 'pre-wrap' }}><code>{value}</code></pre>
+                        <div className="button-row">
+                          <button className="button button--primary" onClick={() => void handleCopy(label, value)} type="button">
+                            {copiedLabel === label ? '已複製' : '複製這段 Macro'}
+                          </button>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+
+                <div className="section-heading" style={{ marginTop: '1.5rem' }}>
+                  <h2>逐步模擬明細</h2>
+                  <p>每一步的進度增量、品質增量、耐久與 CP 變化，以及觸發的特殊備註。</p>
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
+                        <th style={{ padding: '0.4rem 0.6rem', color: 'var(--ink-muted)', fontWeight: 500 }}>#</th>
+                        <th style={{ padding: '0.4rem 0.6rem', color: 'var(--ink-muted)', fontWeight: 500 }}>技能</th>
+                        <th style={{ padding: '0.4rem 0.6rem', color: 'var(--ink-muted)', fontWeight: 500 }}>條件</th>
+                        <th style={{ padding: '0.4rem 0.6rem', color: 'var(--ink-muted)', fontWeight: 500, textAlign: 'right' }}>進度</th>
+                        <th style={{ padding: '0.4rem 0.6rem', color: 'var(--ink-muted)', fontWeight: 500, textAlign: 'right' }}>品質</th>
+                        <th style={{ padding: '0.4rem 0.6rem', color: 'var(--ink-muted)', fontWeight: 500, textAlign: 'right' }}>耐久</th>
+                        <th style={{ padding: '0.4rem 0.6rem', color: 'var(--ink-muted)', fontWeight: 500, textAlign: 'right' }}>剩餘 CP</th>
+                        <th style={{ padding: '0.4rem 0.6rem', color: 'var(--ink-muted)', fontWeight: 500 }}>備註</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {simulation.steps.map((step, index) => (
+                        <tr
+                          key={index}
+                          style={{
+                            borderBottom: '1px solid rgba(255,255,255,0.04)',
+                            background: !step.isValid ? 'rgba(220,50,50,0.06)' : undefined,
+                          }}
+                        >
+                          <td style={{ padding: '0.35rem 0.6rem', color: 'var(--ink-muted)' }}>{index + 1}</td>
+                          <td style={{ padding: '0.35rem 0.6rem' }}>
+                            <span style={{ color: !step.isValid ? 'var(--accent-danger, #f87171)' : undefined }}>
+                              {localizedActionNames[step.actionId] ?? step.actionLabel}
+                            </span>
+                          </td>
+                          <td style={{ padding: '0.35rem 0.6rem', color: 'var(--ink-muted)' }}>
+                            {formatConditionLabel(step.condition)}
+                          </td>
+                          <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: step.progressGain > 0 ? 'var(--accent-strong, #fbbf24)' : 'var(--ink-muted)' }}>
+                            {step.progressGain > 0 ? `+${step.progressGain}` : '—'}
+                          </td>
+                          <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: step.qualityGain > 0 ? '#86efac' : 'var(--ink-muted)' }}>
+                            {step.qualityGain > 0 ? `+${step.qualityGain}` : '—'}
+                          </td>
+                          <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right', color: step.durabilityChange < 0 ? '#f87171' : step.durabilityChange > 0 ? '#86efac' : 'var(--ink-muted)' }}>
+                            {step.durabilityChange !== 0 ? (step.durabilityChange > 0 ? `+${step.durabilityChange}` : step.durabilityChange) : '—'}
+                          </td>
+                          <td style={{ padding: '0.35rem 0.6rem', textAlign: 'right' }}>{step.resultingState.cp}</td>
+                          <td style={{ padding: '0.35rem 0.6rem', color: 'var(--ink-muted)', fontSize: '0.8rem' }}>
+                            {step.note ?? ''}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </div>
         )}

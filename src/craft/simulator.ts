@@ -39,7 +39,19 @@ export type CraftActionId =
 
 type CraftActionKind = 'synthesis' | 'touch' | 'buff' | 'repair' | 'utility'
 
-export type CraftCondition = 'normal' | 'good' | 'excellent' | 'poor'
+export type CraftCondition =
+  | 'normal'
+  | 'good'
+  | 'excellent'
+  | 'poor'
+  | 'centered'   // 安定：機率技成功率 +25%
+  | 'sturdy'     // 結実：耐久消耗 -50%
+  | 'pliant'     // 柔軟：CP 消耗 -50%
+  | 'malleable'  // 強固：進度效率 x1.5
+  | 'primed'     // 備蓄：本次使用 buff 的持續回合 +2
+  | 'goodOmen'   // 前兆：下一回合條件為高品質
+  | 'robust'     // 堅固：耐久消耗 -50%（與結実效果相同，但條件鏈不同）
+
 export type CraftConditionMode = 'normal' | 'favorable'
 export type CraftSolverObjective = 'balanced' | 'quality' | 'completion'
 
@@ -670,33 +682,29 @@ function clamp(value: number, min: number, max: number): number {
 
 function getConditionMultiplier(condition: CraftCondition): number {
   switch (condition) {
-    case 'good':
-      return 1.5
-    case 'excellent':
-      return 4
-    case 'poor':
-      return 0.5
-    default:
-      return 1
+    case 'good': return 1.5
+    case 'excellent': return 4
+    case 'poor': return 0.5
+    default: return 1
   }
 }
 
+/** 在 primed 條件下使用 buff 時的額外持續回合 */
+function getPrimedBonus(condition: CraftCondition): number {
+  return condition === 'primed' ? 2 : 0
+}
+
 function getNextCondition(current: CraftCondition, nextStep: number, mode: CraftConditionMode): CraftCondition {
-  if (current === 'excellent') {
-    return 'poor'
-  }
+  // goodOmen 下一回合強制 good
+  if (current === 'goodOmen') return 'good'
+  // excellent 後必為 poor
+  if (current === 'excellent') return 'poor'
 
-  if (mode === 'normal') {
-    return 'normal'
-  }
+  if (mode === 'normal') return 'normal'
 
-  if (nextStep > 0 && nextStep % 8 === 0) {
-    return 'excellent'
-  }
-
-  if (nextStep > 0 && nextStep % 4 === 0) {
-    return 'good'
-  }
+  // favorable 模式：定期插入 excellent/good 視窗
+  if (nextStep > 0 && nextStep % 8 === 0) return 'excellent'
+  if (nextStep > 0 && nextStep % 4 === 0) return 'good'
 
   return 'normal'
 }
@@ -775,27 +783,25 @@ function isConditionGatedAction(actionId: CraftActionId): boolean {
 }
 
 function getAdjustedDurabilityCost(action: CraftActionDefinition, state: CraftState): number {
-  if (action.durabilityCost === 0) {
-    return 0
-  }
+  if (action.durabilityCost === 0) return 0
+  if (state.buffs.trainedPerfectionReady) return 0
 
-  if (state.buffs.trainedPerfectionReady) {
-    return 0
-  }
-
-  return state.buffs.wasteNot > 0 ? Math.ceil(action.durabilityCost / 2) : action.durabilityCost
+  let cost = action.durabilityCost
+  // Waste Not 減半（先）
+  if (state.buffs.wasteNot > 0) cost = Math.ceil(cost / 2)
+  // 結実 / 堅固 再減半（可疊加）
+  if (state.condition === 'sturdy' || state.condition === 'robust') cost = Math.ceil(cost / 2)
+  return cost
 }
 
 function getAdjustedCpCost(action: CraftActionDefinition, state: CraftState): number {
-  if (action.id === 'standardTouch' && state.lastActionId === 'basicTouch') {
-    return 18
-  }
-
-  if (action.id === 'advancedTouch' && state.lastActionId === 'standardTouch') {
-    return 18
-  }
-
-  return action.cpCost
+  let cost = action.cpCost
+  // 連段折扣
+  if (action.id === 'standardTouch' && state.lastActionId === 'basicTouch') cost = 18
+  else if (action.id === 'advancedTouch' && state.lastActionId === 'standardTouch') cost = 18
+  // 柔軟：CP 消耗 -50%
+  if (state.condition === 'pliant' && cost > 0) cost = Math.ceil(cost / 2)
+  return cost
 }
 
 function buildInvalidResult(action: CraftActionDefinition, state: CraftState, note: string): CraftSimulationStep {
@@ -957,32 +963,35 @@ function simulateAction(
   }
 
   // ── Buff 類 ───────────────────────────────────────────────────────────
+  // 備蓄（Primed）：本回合設置的 buff 持續回合額外 +2
+  const primedBonus = getPrimedBonus(state.condition)
+
   if (action.id === 'veneration') {
-    nextState.buffs.veneration = (action.buffDuration ?? 0) + 1
+    nextState.buffs.veneration = (action.buffDuration ?? 0) + 1 + primedBonus
   }
 
   if (action.id === 'innovation') {
-    nextState.buffs.innovation = (action.buffDuration ?? 0) + 1
+    nextState.buffs.innovation = (action.buffDuration ?? 0) + 1 + primedBonus
   }
 
   if (action.id === 'greatStrides') {
-    nextState.buffs.greatStrides = (action.buffDuration ?? 0) + 1
+    nextState.buffs.greatStrides = (action.buffDuration ?? 0) + 1 + primedBonus
   }
 
   if (action.id === 'wasteNot' || action.id === 'wasteNotII') {
-    nextState.buffs.wasteNot = (action.buffDuration ?? 0) + 1
+    nextState.buffs.wasteNot = (action.buffDuration ?? 0) + 1 + primedBonus
   }
 
   if (action.id === 'manipulation') {
-    nextState.buffs.manipulation = (action.buffDuration ?? 0) + 1
+    nextState.buffs.manipulation = (action.buffDuration ?? 0) + 1 + primedBonus
   }
 
   if (action.id === 'muscleMemory') {
-    nextState.buffs.muscleMemory = 6
+    nextState.buffs.muscleMemory = 6 + primedBonus
   }
 
   if (action.id === 'finalAppraisal') {
-    nextState.buffs.finalAppraisal = (action.buffDuration ?? 0) + 1
+    nextState.buffs.finalAppraisal = (action.buffDuration ?? 0) + 1 + primedBonus
   }
 
   if (action.id === 'heartAndSoul') {
@@ -1020,6 +1029,11 @@ function simulateAction(
     if (state.buffs.muscleMemory > 0 && action.id !== 'muscleMemory') {
       multiplier *= 2
       note = note ? `${note} 套用 Muscle Memory 加成。` : '套用 Muscle Memory 加成。'
+    }
+
+    // 強固：進度效率 x1.5
+    if (state.condition === 'malleable') {
+      multiplier *= 1.5
     }
 
     progressGain = Math.floor(baseProgress * (potency / 100) * multiplier)
