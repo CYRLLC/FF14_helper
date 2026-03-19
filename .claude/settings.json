@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys, json, subprocess; d = json.load(sys.stdin); cmd = d.get('tool_input', {}).get('command', ''); subprocess.run(['git', 'push', 'origin', 'main']) if 'git commit' in cmd else None\" 2>/dev/null || true",
+            "statusMessage": "Pushing to GitHub..."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -52,6 +52,7 @@ interface SavedState {
 
 interface PreviewRow extends MarketOcrParsedRow {
   id: string
+  checked: boolean
 }
 
 // ── Query feature types ──────────────────────────────────────
@@ -295,7 +296,7 @@ function MarketPage() {
       const nextText = result.data.text?.trim() ?? ''
       const parsedRows = extractRowsFromOcrText(nextText)
       setOcrText(nextText)
-      setOcrPreviewRows(parsedRows.map((row) => ({ ...row, id: createId('preview') })))
+      setOcrPreviewRows(parsedRows.map((row) => ({ ...row, id: createId('preview'), checked: true })))
       if (parsedRows.length === 0) {
         setOcrError('OCR 沒有辨識出可用資料，請改用更清楚的截圖，或直接手動修正預覽內容。')
       }
@@ -328,13 +329,22 @@ function MarketPage() {
 
   function applyPreviewRows(): void {
     const parsedRows = ocrPreviewRows
+      .filter((row) => row.checked)
       .map((row) => ({ itemName: row.itemName.trim(), price: Number(row.price), quantity: Math.max(1, Number(row.quantity)) }))
       .filter((row) => row.itemName.length > 0 && row.price > 0)
     if (parsedRows.length === 0) {
-      setOcrError('預覽區沒有可寫入的資料。')
+      setOcrError('沒有勾選的可寫入資料。請先勾選要寫入的列。')
       return
     }
     commitImport(parsedRows, ocrSource)
+  }
+
+  function toggleAllPreviewRows(checked: boolean): void {
+    setOcrPreviewRows((current) => current.map((row) => ({ ...row, checked })))
+  }
+
+  function removeUncheckedPreviewRows(): void {
+    setOcrPreviewRows((current) => current.filter((row) => row.checked))
   }
 
   function importBulkRows(): void {
@@ -716,14 +726,31 @@ function MarketPage() {
                     </div>
                   ) : (
                     <>
+                      <div className="button-row" style={{ marginBottom: '0.5rem' }}>
+                        <button className="button button--ghost" onClick={() => toggleAllPreviewRows(true)} type="button">全選</button>
+                        <button className="button button--ghost" onClick={() => toggleAllPreviewRows(false)} type="button">全消</button>
+                        <button className="button button--ghost" onClick={removeUncheckedPreviewRows} type="button">
+                          刪除未勾選
+                        </button>
+                        <span className="muted" style={{ marginLeft: 'auto', alignSelf: 'center' }}>
+                          已選 {ocrPreviewRows.filter((r) => r.checked).length} / {ocrPreviewRows.length} 列
+                        </span>
+                      </div>
                       <div className="table-wrap">
                         <table className="data-table">
                           <thead>
-                            <tr><th>道具名稱</th><th>價格</th><th>數量</th><th>操作</th></tr>
+                            <tr><th style={{ width: '2rem' }}>✓</th><th>道具名稱</th><th>價格</th><th>數量</th><th>操作</th></tr>
                           </thead>
                           <tbody>
                             {ocrPreviewRows.map((row) => (
-                              <tr key={row.id}>
+                              <tr key={row.id} style={row.checked ? undefined : { opacity: 0.45 }}>
+                                <td>
+                                  <input
+                                    checked={row.checked}
+                                    onChange={(event) => setOcrPreviewRows((current) => current.map((entry) => (entry.id === row.id ? { ...entry, checked: event.target.checked } : entry)))}
+                                    type="checkbox"
+                                  />
+                                </td>
                                 <td>
                                   <input
                                     className="input-text"
@@ -764,7 +791,7 @@ function MarketPage() {
                       </div>
                       <div className="button-row">
                         <button className="button button--primary" onClick={applyPreviewRows} type="button">
-                          寫入工作表
+                          寫入勾選列
                         </button>
                         <button
                           className="button button--ghost"

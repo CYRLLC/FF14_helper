@@ -767,7 +767,9 @@ function decrementBuffs(buffs: CraftBuffState): CraftBuffState {
     wasteNot: Math.max(0, buffs.wasteNot - 1),
     manipulation: Math.max(0, buffs.manipulation - 1),
     muscleMemory: Math.max(0, buffs.muscleMemory - 1),
-    observed: false,
+    // observed 保留目前值；每個動作開始時已在 nextState 初始化為 false，
+    // 只有 observe 動作會將它設回 true。
+    observed: buffs.observed,
     finalAppraisal: Math.max(0, buffs.finalAppraisal - 1),
     heartAndSoul: Math.max(0, buffs.heartAndSoul - 1),
     // 以下為永久旗標，decrementBuffs 不修改
@@ -919,7 +921,8 @@ function simulateAction(
     durability: state.durability - durabilityCost,
     step: state.step + 1,
     lastActionId: action.id,
-    buffs: { ...state.buffs },
+    // observed 每個動作開始時重置為 false，只有 observe 動作的 handler 才會再設為 true
+    buffs: { ...state.buffs, observed: false },
   }
 
   let progressGain = 0
