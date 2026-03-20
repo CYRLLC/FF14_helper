@@ -11,6 +11,10 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.1.0'),
   },
+  optimizeDeps: {
+    // onnxruntime-web ships its own WASM and must NOT be pre-bundled by Vite
+    exclude: ['onnxruntime-web'],
+  },
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
