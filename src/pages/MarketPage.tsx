@@ -20,6 +20,11 @@ import {
 } from '../tools/marketOcr'
 import type { MarketScopeSelection } from '../types'
 import { getErrorMessage } from '../utils/errors'
+import {
+  claudeVisionMarket,
+  claudeVisionQuery,
+  OCR_API_KEY_STORAGE,
+} from '../api/claudeVisionOcr'
 
 const STORAGE_KEY = 'ff14-helper.market.workbench.v3'
 
@@ -336,6 +341,9 @@ function MarketPage() {
   const [ocrVerifyBusy, setOcrVerifyBusy] = useState(false)
   const [ocrSource, setOcrSource] = useState<ImportSource>('ocr-image')
   const [dropActive, setDropActive] = useState(false)
+  const [ocrApiKey, setOcrApiKey] = useState(() => window.localStorage.getItem(OCR_API_KEY_STORAGE) ?? '')
+  const [ocrApiKeyDraft, setOcrApiKeyDraft] = useState('')
+  const [showApiKeyPanel, setShowApiKeyPanel] = useState(false)
 
   // Query feature state
   const [activeTab, setActiveTab] = useState<MarketTab>('import')
@@ -411,19 +419,29 @@ function MarketPage() {
     setOcrPreviewUrl(URL.createObjectURL(file))
     setOcrSource(source)
     try {
-      const processedFile = await preprocessImageForOcr(file)
-      // chi_tra 純繁中，PSM.SINGLE_BLOCK = 單一文字區塊（適合遊戲 UI 列表）
-      const { PSM, createWorker } = await import('tesseract.js')
-      const worker = await createWorker('chi_tra')
-      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
-      const result = await worker.recognize(processedFile)
-      await worker.terminate()
-      const nextText = result.data.text?.trim() ?? ''
-      const parsedRows = extractRowsFromOcrText(nextText)
-      setOcrText(nextText)
-      setOcrPreviewRows(parsedRows.map((row) => ({ ...row, id: createId('preview'), checked: true })))
-      if (parsedRows.length === 0) {
-        setOcrError('OCR 沒有辨識出可用資料，請改用更清楚的截圖，或直接手動修正預覽內容。')
+      if (ocrApiKey) {
+        // ── Claude Vision 模式（高精確度）──────────────────────────────────
+        const visionRows = await claudeVisionMarket(file, ocrApiKey)
+        setOcrText(`Claude Vision 辨識到 ${visionRows.length} 筆資料。`)
+        setOcrPreviewRows(visionRows.map((r) => ({ ...r, id: createId('preview'), checked: true })))
+        if (visionRows.length === 0) {
+          setOcrError('Claude Vision 未偵測到市場板資料。請確認截圖是否為市場板頁面。')
+        }
+      } else {
+        // ── Tesseract fallback ────────────────────────────────────────────
+        const processedFile = await preprocessImageForOcr(file)
+        const { PSM, createWorker } = await import('tesseract.js')
+        const worker = await createWorker('chi_tra')
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
+        const result = await worker.recognize(processedFile)
+        await worker.terminate()
+        const nextText = result.data.text?.trim() ?? ''
+        const parsedRows = extractRowsFromOcrText(nextText)
+        setOcrText(nextText)
+        setOcrPreviewRows(parsedRows.map((row) => ({ ...row, id: createId('preview'), checked: true })))
+        if (parsedRows.length === 0) {
+          setOcrError('OCR 沒有辨識出可用資料。建議設定 Claude Vision API Key 以提升精確度。')
+        }
       }
     } catch (error) {
       setOcrPreviewRows([])
@@ -589,14 +607,19 @@ function MarketPage() {
     if (queryPreviewUrl) URL.revokeObjectURL(queryPreviewUrl)
     setQueryPreviewUrl(URL.createObjectURL(file))
     try {
-      const processedFile = await preprocessImageForOcr(file)
-      const { createWorker, PSM } = await import('tesseract.js')
-      const worker = await createWorker('chi_tra')
-      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
-      const result = await worker.recognize(processedFile)
-      await worker.terminate()
-      const names = extractNamesFromOcrText(result.data.text?.trim() ?? '')
-      setQueryNames(names.map((name) => ({ id: createId('q'), name })))
+      if (ocrApiKey) {
+        const names = await claudeVisionQuery(file, ocrApiKey)
+        setQueryNames(names.map((name) => ({ id: createId('q'), name })))
+      } else {
+        const processedFile = await preprocessImageForOcr(file)
+        const { createWorker, PSM } = await import('tesseract.js')
+        const worker = await createWorker('chi_tra')
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
+        const result = await worker.recognize(processedFile)
+        await worker.terminate()
+        const names = extractNamesFromOcrText(result.data.text?.trim() ?? '')
+        setQueryNames(names.map((name) => ({ id: createId('q'), name })))
+      }
     } catch (error) {
       setMessage(`查詢 OCR 失敗：${getErrorMessage(error)}`)
     } finally {
@@ -795,6 +818,67 @@ function MarketPage() {
                 <h2>匯入截圖或批次文字</h2>
                 <p>先指定這次 OCR 要寫進哪一個伺服器，再貼上截圖、拖曳圖片或用 Tab 分隔文字批次匯入。</p>
               </div>
+
+              {/* ── OCR 引擎設定 ── */}
+              <div className="badge-row" style={{ marginBottom: '0.75rem' }}>
+                {ocrApiKey
+                  ? <span className="badge badge--positive">Claude Vision OCR 已啟用</span>
+                  : <span className="badge">OCR 引擎：Tesseract（精確度有限）</span>
+                }
+                <button
+                  className="button button--ghost"
+                  onClick={() => { setShowApiKeyPanel((v) => !v); setOcrApiKeyDraft(ocrApiKey) }}
+                  style={{ marginLeft: '0.5rem', padding: '0.2rem 0.6rem', fontSize: '0.8rem' }}
+                  type="button"
+                >
+                  {showApiKeyPanel ? '收起' : '設定 Claude Vision API Key'}
+                </button>
+              </div>
+              {showApiKeyPanel && (
+                <div className="callout" style={{ marginBottom: '0.75rem' }}>
+                  <span className="callout-title">Claude Vision API Key</span>
+                  <span className="callout-body" style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>
+                    API Key 只存在瀏覽器 localStorage，不會上傳到任何伺服器。
+                    取得方式：<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">Anthropic Console</a>
+                  </span>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
+                    <input
+                      className="input-text"
+                      placeholder="sk-ant-..."
+                      style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.85rem' }}
+                      type="password"
+                      value={ocrApiKeyDraft}
+                      onChange={(e) => setOcrApiKeyDraft(e.target.value)}
+                    />
+                    <button
+                      className="button button--primary"
+                      type="button"
+                      onClick={() => {
+                        const trimmed = ocrApiKeyDraft.trim()
+                        window.localStorage.setItem(OCR_API_KEY_STORAGE, trimmed)
+                        setOcrApiKey(trimmed)
+                        setShowApiKeyPanel(false)
+                      }}
+                    >
+                      儲存
+                    </button>
+                    {ocrApiKey && (
+                      <button
+                        className="button button--ghost"
+                        type="button"
+                        onClick={() => {
+                          window.localStorage.removeItem(OCR_API_KEY_STORAGE)
+                          setOcrApiKey('')
+                          setOcrApiKeyDraft('')
+                        }}
+                      >
+                        清除
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="field-grid">
                 <label className="field">
                   <span className="field-label">OCR 目標伺服器</span>
