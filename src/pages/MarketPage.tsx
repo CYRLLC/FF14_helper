@@ -92,6 +92,66 @@ const TABS: Array<{ id: MarketTab; label: string }> = [
   { id: 'query', label: '道具查詢' },
 ]
 
+// ── OCR Image Pre-processing ──────────────────────────────────
+
+/**
+ * 將截圖做灰階 + 對比強化 + 放大（最短邊不足 1400px 時）。
+ * FFXIV UI 為暗色背景，偵測到均亮度 < 120 時自動反色，讓 Tesseract 讀暗底亮字。
+ * 失敗時回傳原始 Blob（graceful fallback）。
+ */
+async function preprocessImageForOcr(file: Blob): Promise<Blob> {
+  return new Promise((resolve) => {
+    const img = new window.Image()
+    const url = URL.createObjectURL(file)
+
+    img.onload = () => {
+      try {
+        const shorter = Math.min(img.naturalWidth, img.naturalHeight)
+        const scale = shorter > 0 && shorter < 1400 ? Math.ceil(1400 / shorter) : 1
+        const w = img.naturalWidth * scale
+        const h = img.naturalHeight * scale
+
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) { URL.revokeObjectURL(url); resolve(file); return }
+
+        ctx.drawImage(img, 0, 0, w, h)
+        URL.revokeObjectURL(url)
+
+        const imgData = ctx.getImageData(0, 0, w, h)
+        const d = imgData.data
+
+        // 偵測均亮度（判斷暗/亮背景）
+        let totalLum = 0
+        for (let i = 0; i < d.length; i += 4) {
+          totalLum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+        }
+        const isDark = (totalLum / (d.length / 4)) < 120
+
+        // 灰階 + 反色（暗背景）+ 對比強化
+        const contrast = 1.7
+        for (let i = 0; i < d.length; i += 4) {
+          let lum = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2])
+          if (isDark) lum = 255 - lum
+          lum = Math.min(255, Math.max(0, Math.round(128 + contrast * (lum - 128))))
+          d[i] = d[i + 1] = d[i + 2] = lum
+        }
+
+        ctx.putImageData(imgData, 0, 0)
+        canvas.toBlob((blob) => resolve(blob ?? file), 'image/png')
+      } catch {
+        URL.revokeObjectURL(url)
+        resolve(file)
+      }
+    }
+
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
+    img.src = url
+  })
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 function createId(prefix: string): string {
@@ -289,9 +349,12 @@ function MarketPage() {
     setOcrPreviewUrl(URL.createObjectURL(file))
     setOcrSource(source)
     try {
-      const { createWorker } = await import('tesseract.js')
-      const worker = await createWorker('chi_tra+eng')
-      const result = await worker.recognize(file)
+      const processedFile = await preprocessImageForOcr(file)
+      // chi_tra 純繁中，PSM.SINGLE_BLOCK = 單一文字區塊（適合遊戲 UI 列表）
+      const { PSM, createWorker } = await import('tesseract.js')
+      const worker = await createWorker('chi_tra')
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
+      const result = await worker.recognize(processedFile)
       await worker.terminate()
       const nextText = result.data.text?.trim() ?? ''
       const parsedRows = extractRowsFromOcrText(nextText)
@@ -429,9 +492,11 @@ function MarketPage() {
     if (queryPreviewUrl) URL.revokeObjectURL(queryPreviewUrl)
     setQueryPreviewUrl(URL.createObjectURL(file))
     try {
-      const { createWorker } = await import('tesseract.js')
-      const worker = await createWorker('chi_tra+eng')
-      const result = await worker.recognize(file)
+      const processedFile = await preprocessImageForOcr(file)
+      const { createWorker, PSM } = await import('tesseract.js')
+      const worker = await createWorker('chi_tra')
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
+      const result = await worker.recognize(processedFile)
       await worker.terminate()
       const names = extractNamesFromOcrText(result.data.text?.trim() ?? '')
       setQueryNames(names.map((name) => ({ id: createId('q'), name })))
