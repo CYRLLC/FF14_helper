@@ -53,6 +53,8 @@ interface SavedState {
 interface PreviewRow extends MarketOcrParsedRow {
   id: string
   checked: boolean
+  /** XIVAPI 驗證狀態：'ok' = 名稱已確認，'corrected' = 已自動修正，'unknown' = 查不到 */
+  verifyStatus?: 'ok' | 'corrected' | 'unknown'
 }
 
 // ── Query feature types ──────────────────────────────────────
@@ -95,9 +97,56 @@ const TABS: Array<{ id: MarketTab; label: string }> = [
 // ── OCR Image Pre-processing ──────────────────────────────────
 
 /**
- * 將截圖做灰階 + 對比強化 + 放大（最短邊不足 1400px 時）。
- * FFXIV UI 為暗色背景，偵測到均亮度 < 120 時自動反色，讓 Tesseract 讀暗底亮字。
- * 失敗時回傳原始 Blob（graceful fallback）。
+ * Laplacian 銳化：強化文字邊緣（同一個 gray channel，不需處理 alpha）。
+ * kernel = [0,-1,0,-1,5,-1,0,-1,0]
+ */
+function sharpenGrayscale(d: Uint8ClampedArray, w: number, h: number): void {
+  const src = new Uint8ClampedArray(d)
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = (y * w + x) * 4
+      const v = Math.min(255, Math.max(0,
+        src[i] * 5
+        - src[((y - 1) * w + x) * 4]
+        - src[((y + 1) * w + x) * 4]
+        - src[(y * w + x - 1) * 4]
+        - src[(y * w + x + 1) * 4],
+      ))
+      d[i] = d[i + 1] = d[i + 2] = v
+    }
+  }
+}
+
+/** Otsu 自適應閾值：最大化類間變異數，回傳最佳分割亮度值。 */
+function computeOtsuThreshold(d: Uint8ClampedArray): number {
+  const hist = new Int32Array(256)
+  for (let i = 0; i < d.length; i += 4) hist[d[i]]++
+  const total = d.length / 4
+  let sum = 0
+  for (let t = 0; t < 256; t++) sum += t * hist[t]
+  let sumB = 0, wB = 0, maxVar = 0, threshold = 128
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t]
+    if (!wB || wB === total) continue
+    const wF = total - wB
+    sumB += t * hist[t]
+    const mB = sumB / wB
+    const mF = (sum - sumB) / wF
+    const v = wB * wF * (mB - mF) ** 2
+    if (v > maxVar) { maxVar = v; threshold = t }
+  }
+  return threshold
+}
+
+/**
+ * OCR 圖片前處理管線：
+ * 1. 只有短邊 < 600px 才放大（FFXIV 截圖通常已夠大，過度放大反而拖慢銳化）
+ * 2. 灰階化
+ * 3. 暗背景（均亮 < 120）→ 反色，讓文字變暗
+ * 4. 對比強化（1.8x）
+ * 5. Laplacian 銳化
+ * 6. Otsu 二值化（純黑白，Tesseract 最佳輸入格式）
+ * 失敗時 graceful fallback 回傳原始 Blob。
  */
 async function preprocessImageForOcr(file: Blob): Promise<Blob> {
   return new Promise((resolve) => {
@@ -107,7 +156,8 @@ async function preprocessImageForOcr(file: Blob): Promise<Blob> {
     img.onload = () => {
       try {
         const shorter = Math.min(img.naturalWidth, img.naturalHeight)
-        const scale = shorter > 0 && shorter < 1400 ? Math.ceil(1400 / shorter) : 1
+        // 只有非常小的圖才放大，避免銳化在大圖上花太久
+        const scale = shorter > 0 && shorter < 600 ? 2 : 1
         const w = img.naturalWidth * scale
         const h = img.naturalHeight * scale
 
@@ -123,20 +173,31 @@ async function preprocessImageForOcr(file: Blob): Promise<Blob> {
         const imgData = ctx.getImageData(0, 0, w, h)
         const d = imgData.data
 
-        // 偵測均亮度（判斷暗/亮背景）
+        // 步驟 1：灰階 + 偵測均亮度
         let totalLum = 0
         for (let i = 0; i < d.length; i += 4) {
-          totalLum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+          const lum = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2])
+          d[i] = d[i + 1] = d[i + 2] = lum
+          totalLum += lum
         }
         const isDark = (totalLum / (d.length / 4)) < 120
 
-        // 灰階 + 反色（暗背景）+ 對比強化
-        const contrast = 1.7
+        // 步驟 2：暗背景反色 + 對比強化（1.8x）
+        const contrast = 1.8
         for (let i = 0; i < d.length; i += 4) {
-          let lum = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2])
-          if (isDark) lum = 255 - lum
+          let lum = isDark ? 255 - d[i] : d[i]
           lum = Math.min(255, Math.max(0, Math.round(128 + contrast * (lum - 128))))
           d[i] = d[i + 1] = d[i + 2] = lum
+        }
+
+        // 步驟 3：Laplacian 銳化
+        sharpenGrayscale(d, w, h)
+
+        // 步驟 4：Otsu 二值化
+        const thresh = computeOtsuThreshold(d)
+        for (let i = 0; i < d.length; i += 4) {
+          const v = d[i] >= thresh ? 255 : 0
+          d[i] = d[i + 1] = d[i + 2] = v
         }
 
         ctx.putImageData(imgData, 0, 0)
@@ -272,6 +333,7 @@ function MarketPage() {
   const [ocrText, setOcrText] = useState('')
   const [ocrError, setOcrError] = useState<string | null>(null)
   const [ocrBusy, setOcrBusy] = useState(false)
+  const [ocrVerifyBusy, setOcrVerifyBusy] = useState(false)
   const [ocrSource, setOcrSource] = useState<ImportSource>('ocr-image')
   const [dropActive, setDropActive] = useState(false)
 
@@ -408,6 +470,41 @@ function MarketPage() {
 
   function removeUncheckedPreviewRows(): void {
     setOcrPreviewRows((current) => current.filter((row) => row.checked))
+  }
+
+  /**
+   * 逐列查詢 XIVAPI，比對 OCR 名稱與實際物品名稱：
+   * - 完全一致 → verifyStatus: 'ok'
+   * - 有更相似的候選 → 自動修正名稱，verifyStatus: 'corrected'
+   * - 查無結果 → verifyStatus: 'unknown'（不修改名稱）
+   */
+  async function autoVerifyOcrNames(): Promise<void> {
+    if (ocrPreviewRows.length === 0 || ocrVerifyBusy) return
+    setOcrVerifyBusy(true)
+    const results = await Promise.allSettled(
+      ocrPreviewRows.map(async (row): Promise<PreviewRow> => {
+        const trimmed = row.itemName.trim()
+        if (trimmed.length < 2) return { ...row, verifyStatus: 'unknown' }
+        try {
+          const found = await searchXivapi(trimmed, 'Item', 1, 'chs')
+          if (found.length === 0) return { ...row, verifyStatus: 'unknown' }
+          const apiName = found[0].name
+          if (!apiName) return { ...row, verifyStatus: 'unknown' }
+          if (apiName === trimmed) return { ...row, verifyStatus: 'ok' }
+          // 計算字元相似度，>= 50% 才自動修正
+          const shared = [...apiName].filter((ch) => trimmed.includes(ch)).length
+          const similarity = (2 * shared) / (apiName.length + trimmed.length)
+          if (similarity >= 0.5) return { ...row, itemName: apiName, verifyStatus: 'corrected' }
+          return { ...row, verifyStatus: 'unknown' }
+        } catch {
+          return row
+        }
+      }),
+    )
+    setOcrPreviewRows(
+      results.map((r, i) => (r.status === 'fulfilled' ? r.value : ocrPreviewRows[i])),
+    )
+    setOcrVerifyBusy(false)
   }
 
   function importBulkRows(): void {
@@ -797,6 +894,15 @@ function MarketPage() {
                         <button className="button button--ghost" onClick={removeUncheckedPreviewRows} type="button">
                           刪除未勾選
                         </button>
+                        <button
+                          className="button button--ghost"
+                          disabled={ocrVerifyBusy}
+                          onClick={() => void autoVerifyOcrNames()}
+                          type="button"
+                          title="查詢 XIVAPI 確認 / 修正道具名稱"
+                        >
+                          {ocrVerifyBusy ? '驗證中…' : '自動驗證名稱'}
+                        </button>
                         <span className="muted" style={{ marginLeft: 'auto', alignSelf: 'center' }}>
                           已選 {ocrPreviewRows.filter((r) => r.checked).length} / {ocrPreviewRows.length} 列
                         </span>
@@ -817,12 +923,17 @@ function MarketPage() {
                                   />
                                 </td>
                                 <td>
-                                  <input
-                                    className="input-text"
-                                    onChange={(event) => setOcrPreviewRows((current) => current.map((entry) => (entry.id === row.id ? { ...entry, itemName: event.target.value } : entry)))}
-                                    type="text"
-                                    value={row.itemName}
-                                  />
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    <input
+                                      className="input-text"
+                                      onChange={(event) => setOcrPreviewRows((current) => current.map((entry) => (entry.id === row.id ? { ...entry, itemName: event.target.value, verifyStatus: undefined } : entry)))}
+                                      type="text"
+                                      value={row.itemName}
+                                    />
+                                    {row.verifyStatus === 'ok' && <span className="badge badge--positive" title="XIVAPI 已確認">✓</span>}
+                                    {row.verifyStatus === 'corrected' && <span className="badge badge--warning" title="名稱已由 XIVAPI 自動修正">修正</span>}
+                                    {row.verifyStatus === 'unknown' && <span className="badge" title="XIVAPI 找不到對應道具">?</span>}
+                                  </div>
                                 </td>
                                 <td>
                                   <input
