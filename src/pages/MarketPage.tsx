@@ -442,23 +442,30 @@ function MarketPage() {
           setOcrText(`PaddleOCR 辨識到 ${paddleRows.length} 筆資料。`)
           setOcrPreviewRows(paddleRows.map((r) => ({ ...r, id: createId('preview'), checked: true })))
           if (paddleRows.length === 0) {
-            setOcrError('PaddleOCR 未辨識出市場板資料。可設定 Claude Vision API Key 以提升精確度。')
+            setOcrError('PaddleOCR 未辨識出市場板資料。建議設定 Claude Vision API Key 以提升精確度。')
           }
-        } catch {
-          // ── Tier 3: Tesseract fallback ──────────────────────────────────
+        } catch (paddleErr) {
+          // ── Tier 3: Tesseract fallback（PaddleOCR 初始化失敗時）────────
           setPaddleLoadProgress(null)
-          const processedFile = await preprocessImageForOcr(file)
-          const { PSM, createWorker } = await import('tesseract.js')
-          const worker = await createWorker('chi_tra')
-          await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
-          const result = await worker.recognize(processedFile)
-          await worker.terminate()
-          const nextText = result.data.text?.trim() ?? ''
-          const parsedRows = extractRowsFromOcrText(nextText)
-          setOcrText(nextText)
-          setOcrPreviewRows(parsedRows.map((row) => ({ ...row, id: createId('preview'), checked: true })))
-          if (parsedRows.length === 0) {
-            setOcrError('OCR 沒有辨識出可用資料。建議設定 Claude Vision API Key 以提升精確度。')
+          const paddleErrMsg = getErrorMessage(paddleErr)
+          try {
+            const processedFile = await preprocessImageForOcr(file)
+            const { PSM, createWorker } = await import('tesseract.js')
+            const worker = await createWorker('chi_tra')
+            await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
+            const result = await worker.recognize(processedFile)
+            await worker.terminate()
+            const nextText = result.data.text?.trim() ?? ''
+            const parsedRows = extractRowsFromOcrText(nextText)
+            setOcrText(nextText)
+            setOcrPreviewRows(parsedRows.map((row) => ({ ...row, id: createId('preview'), checked: true })))
+            if (parsedRows.length === 0) {
+              setOcrError(`PaddleOCR 失敗（${paddleErrMsg}），Tesseract 也未辨識出資料。建議設定 Claude Vision API Key。`)
+            } else {
+              setOcrError(`PaddleOCR 失敗（${paddleErrMsg}），已改用 Tesseract 辨識。`)
+            }
+          } catch {
+            setOcrError(`PaddleOCR 失敗：${paddleErrMsg}`)
           }
         }
       }
@@ -635,7 +642,7 @@ function MarketPage() {
         try {
           const names = await paddleOcrQuery(file)
           setQueryNames(names.map((name) => ({ id: createId('q'), name })))
-        } catch {
+        } catch (paddleErr) {
           // ── Tier 3: Tesseract fallback ──────────────────────────────────
           const processedFile = await preprocessImageForOcr(file)
           const { createWorker, PSM } = await import('tesseract.js')
@@ -645,6 +652,7 @@ function MarketPage() {
           await worker.terminate()
           const names = extractNamesFromOcrText(result.data.text?.trim() ?? '')
           setQueryNames(names.map((name) => ({ id: createId('q'), name })))
+          setMessage(`PaddleOCR 失敗（${getErrorMessage(paddleErr)}），已改用 Tesseract。`)
         }
       }
     } catch (error) {

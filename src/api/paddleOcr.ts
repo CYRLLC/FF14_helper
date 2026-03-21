@@ -64,6 +64,10 @@ async function initPaddleOcr(
     import('onnxruntime-web'),
   ])
 
+  // Vite content-hashes WASM filenames, so onnxruntime-web can't find them by their
+  // original name.  Point it at a pinned CDN copy with predictable, unhashed filenames.
+  ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/'
+
   const base = import.meta.env.BASE_URL
   const detUrl = `${base}models/PP-OCRv5_mobile_det_infer.onnx`
   const recUrl = `${base}models/PP-OCRv5_mobile_rec_infer.onnx`
@@ -112,8 +116,15 @@ export async function getPaddleOcr(
   return _initPromise
 }
 
-// ─── Image decode ─────────────────────────────────────────────────────────────
+// ─── Image decode + FFXIV preprocessing ──────────────────────────────────────
 
+/**
+ * Decode a Blob → RGBA ImageData, then apply FFXIV-specific preprocessing:
+ * - If the image has a dark background (avg luminance < 100), invert it so
+ *   PP-OCRv5's detection model sees dark text on a light background, which
+ *   matches its training distribution better.
+ * - Boost contrast by 1.6× to make characters sharper.
+ */
 async function blobToImageInput(blob: Blob): Promise<{ width: number; height: number; data: Uint8Array }> {
   const url = URL.createObjectURL(blob)
   try {
@@ -130,10 +141,36 @@ async function blobToImageInput(blob: Blob): Promise<{ width: number; height: nu
     if (!ctx) throw new Error('Canvas 2d context unavailable')
     ctx.drawImage(img, 0, 0)
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const d = imageData.data  // Uint8ClampedArray, RGBA
+
+    // Compute average luminance (sample every 4th pixel for speed)
+    let lumSum = 0
+    const step = 4 * 4  // skip 3 pixels at a time
+    let count = 0
+    for (let i = 0; i < d.length; i += step) {
+      lumSum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+      count++
+    }
+    const avgLum = lumSum / count
+    const isDark = avgLum < 100
+
+    // Contrast factor (applied as: new = (old - 128) * factor + 128)
+    const contrast = 1.6
+
+    for (let i = 0; i < d.length; i += 4) {
+      let r = d[i], g = d[i + 1], b = d[i + 2]
+      if (isDark) { r = 255 - r; g = 255 - g; b = 255 - b }
+      // contrast
+      r = Math.max(0, Math.min(255, (r - 128) * contrast + 128))
+      g = Math.max(0, Math.min(255, (g - 128) * contrast + 128))
+      b = Math.max(0, Math.min(255, (b - 128) * contrast + 128))
+      d[i] = r; d[i + 1] = g; d[i + 2] = b
+    }
+
     return {
       width: canvas.width,
       height: canvas.height,
-      data: new Uint8Array(imageData.data.buffer),
+      data: new Uint8Array(d.buffer),
     }
   } finally {
     URL.revokeObjectURL(url)
