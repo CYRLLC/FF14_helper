@@ -21,11 +21,6 @@ import {
 import type { MarketScopeSelection } from '../types'
 import { getErrorMessage } from '../utils/errors'
 import {
-  claudeVisionMarket,
-  claudeVisionQuery,
-  OCR_API_KEY_STORAGE,
-} from '../api/claudeVisionOcr'
-import {
   paddleOcrMarket,
   paddleOcrQuery,
   type PaddleLoadProgress,
@@ -347,9 +342,6 @@ function MarketPage() {
   const [paddleLoadProgress, setPaddleLoadProgress] = useState<PaddleLoadProgress | null>(null)
   const [ocrSource, setOcrSource] = useState<ImportSource>('ocr-image')
   const [dropActive, setDropActive] = useState(false)
-  const [ocrApiKey, setOcrApiKey] = useState(() => window.localStorage.getItem(OCR_API_KEY_STORAGE) ?? '')
-  const [ocrApiKeyDraft, setOcrApiKeyDraft] = useState('')
-  const [showApiKeyPanel, setShowApiKeyPanel] = useState(false)
 
   // Query feature state
   const [activeTab, setActiveTab] = useState<MarketTab>('import')
@@ -425,49 +417,31 @@ function MarketPage() {
     setOcrPreviewUrl(URL.createObjectURL(file))
     setOcrSource(source)
     try {
-      if (ocrApiKey) {
-        // ── Tier 1: Claude Vision（高精確度，需 API Key）────────────────
-        const visionRows = await claudeVisionMarket(file, ocrApiKey)
-        setOcrText(`Claude Vision 辨識到 ${visionRows.length} 筆資料。`)
-        setOcrPreviewRows(visionRows.map((r) => ({ ...r, id: createId('preview'), checked: true })))
-        if (visionRows.length === 0) {
-          setOcrError('Claude Vision 未偵測到市場板資料。請確認截圖是否為市場板頁面。')
+      // ── Tier 1: PaddleOCR PP-OCRv5（免費，首次使用需下載 ~21MB 模型）──
+      try {
+        setPaddleLoadProgress(null)
+        const { rows: paddleRows, rawText } = await paddleOcrMarket(file, (p) => setPaddleLoadProgress(p))
+        setPaddleLoadProgress(null)
+        setOcrText(rawText || `PaddleOCR 辨識到 ${paddleRows.length} 筆資料。`)
+        setOcrPreviewRows(paddleRows.map((r) => ({ ...r, id: createId('preview'), checked: true })))
+        if (paddleRows.length === 0) {
+          setOcrError('PaddleOCR 未辨識出市場板資料。下方文字區域可查看原始辨識內容。')
         }
-      } else {
-        // ── Tier 2: PaddleOCR PP-OCRv5（免費，首次使用需下載 ~21MB 模型）─
-        try {
-          setPaddleLoadProgress(null)
-          const paddleRows = await paddleOcrMarket(file, (p) => setPaddleLoadProgress(p))
-          setPaddleLoadProgress(null)
-          setOcrText(`PaddleOCR 辨識到 ${paddleRows.length} 筆資料。`)
-          setOcrPreviewRows(paddleRows.map((r) => ({ ...r, id: createId('preview'), checked: true })))
-          if (paddleRows.length === 0) {
-            setOcrError('PaddleOCR 未辨識出市場板資料。建議設定 Claude Vision API Key 以提升精確度。')
-          }
-        } catch (paddleErr) {
-          // ── Tier 3: Tesseract fallback（PaddleOCR 初始化失敗時）────────
-          setPaddleLoadProgress(null)
-          const paddleErrMsg = getErrorMessage(paddleErr)
-          try {
-            const processedFile = await preprocessImageForOcr(file)
-            const { PSM, createWorker } = await import('tesseract.js')
-            const worker = await createWorker('chi_tra')
-            await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
-            const result = await worker.recognize(processedFile)
-            await worker.terminate()
-            const nextText = result.data.text?.trim() ?? ''
-            const parsedRows = extractRowsFromOcrText(nextText)
-            setOcrText(nextText)
-            setOcrPreviewRows(parsedRows.map((row) => ({ ...row, id: createId('preview'), checked: true })))
-            if (parsedRows.length === 0) {
-              setOcrError(`PaddleOCR 失敗（${paddleErrMsg}），Tesseract 也未辨識出資料。建議設定 Claude Vision API Key。`)
-            } else {
-              setOcrError(`PaddleOCR 失敗（${paddleErrMsg}），已改用 Tesseract 辨識。`)
-            }
-          } catch {
-            setOcrError(`PaddleOCR 失敗：${paddleErrMsg}`)
-          }
-        }
+      } catch (paddleErr) {
+        // ── Tier 2: Tesseract fallback（PaddleOCR 初始化失敗時）──────────
+        setPaddleLoadProgress(null)
+        const paddleErrMsg = getErrorMessage(paddleErr)
+        const processedFile = await preprocessImageForOcr(file)
+        const { PSM, createWorker } = await import('tesseract.js')
+        const worker = await createWorker('chi_tra')
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
+        const result = await worker.recognize(processedFile)
+        await worker.terminate()
+        const nextText = result.data.text?.trim() ?? ''
+        const parsedRows = extractRowsFromOcrText(nextText)
+        setOcrText(nextText)
+        setOcrPreviewRows(parsedRows.map((row) => ({ ...row, id: createId('preview'), checked: true })))
+        setOcrError(`PaddleOCR 失敗（${paddleErrMsg}），已改用 Tesseract。`)
       }
     } catch (error) {
       setOcrPreviewRows([])
@@ -633,27 +607,20 @@ function MarketPage() {
     if (queryPreviewUrl) URL.revokeObjectURL(queryPreviewUrl)
     setQueryPreviewUrl(URL.createObjectURL(file))
     try {
-      if (ocrApiKey) {
-        // ── Tier 1: Claude Vision ───────────────────────────────────────
-        const names = await claudeVisionQuery(file, ocrApiKey)
+      try {
+        const names = await paddleOcrQuery(file)
         setQueryNames(names.map((name) => ({ id: createId('q'), name })))
-      } else {
-        // ── Tier 2: PaddleOCR PP-OCRv5 ─────────────────────────────────
-        try {
-          const names = await paddleOcrQuery(file)
-          setQueryNames(names.map((name) => ({ id: createId('q'), name })))
-        } catch (paddleErr) {
-          // ── Tier 3: Tesseract fallback ──────────────────────────────────
-          const processedFile = await preprocessImageForOcr(file)
-          const { createWorker, PSM } = await import('tesseract.js')
-          const worker = await createWorker('chi_tra')
-          await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
-          const result = await worker.recognize(processedFile)
-          await worker.terminate()
-          const names = extractNamesFromOcrText(result.data.text?.trim() ?? '')
-          setQueryNames(names.map((name) => ({ id: createId('q'), name })))
-          setMessage(`PaddleOCR 失敗（${getErrorMessage(paddleErr)}），已改用 Tesseract。`)
-        }
+      } catch (paddleErr) {
+        // Tesseract fallback
+        const processedFile = await preprocessImageForOcr(file)
+        const { createWorker, PSM } = await import('tesseract.js')
+        const worker = await createWorker('chi_tra')
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
+        const result = await worker.recognize(processedFile)
+        await worker.terminate()
+        const names = extractNamesFromOcrText(result.data.text?.trim() ?? '')
+        setQueryNames(names.map((name) => ({ id: createId('q'), name })))
+        setMessage(`PaddleOCR 失敗（${getErrorMessage(paddleErr)}），已改用 Tesseract。`)
       }
     } catch (error) {
       setMessage(`查詢 OCR 失敗：${getErrorMessage(error)}`)
@@ -854,65 +821,9 @@ function MarketPage() {
                 <p>先指定這次 OCR 要寫進哪一個伺服器，再貼上截圖、拖曳圖片或用 Tab 分隔文字批次匯入。</p>
               </div>
 
-              {/* ── OCR 引擎設定 ── */}
               <div className="badge-row" style={{ marginBottom: '0.75rem' }}>
-                {ocrApiKey
-                  ? <span className="badge badge--positive">Claude Vision OCR 已啟用</span>
-                  : <span className="badge badge--info">OCR 引擎：PaddleOCR PP-OCRv5（免費）</span>
-                }
-                <button
-                  className="button button--ghost"
-                  onClick={() => { setShowApiKeyPanel((v) => !v); setOcrApiKeyDraft(ocrApiKey) }}
-                  style={{ marginLeft: '0.5rem', padding: '0.2rem 0.6rem', fontSize: '0.8rem' }}
-                  type="button"
-                >
-                  {showApiKeyPanel ? '收起' : '設定 Claude Vision API Key'}
-                </button>
+                <span className="badge badge--info">OCR 引擎：PaddleOCR PP-OCRv5</span>
               </div>
-              {showApiKeyPanel && (
-                <div className="callout" style={{ marginBottom: '0.75rem' }}>
-                  <span className="callout-title">Claude Vision API Key</span>
-                  <span className="callout-body" style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>
-                    API Key 只存在瀏覽器 localStorage，不會上傳到任何伺服器。
-                    取得方式：<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">Anthropic Console</a>
-                  </span>
-                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
-                    <input
-                      className="input-text"
-                      placeholder="sk-ant-..."
-                      style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.85rem' }}
-                      type="password"
-                      value={ocrApiKeyDraft}
-                      onChange={(e) => setOcrApiKeyDraft(e.target.value)}
-                    />
-                    <button
-                      className="button button--primary"
-                      type="button"
-                      onClick={() => {
-                        const trimmed = ocrApiKeyDraft.trim()
-                        window.localStorage.setItem(OCR_API_KEY_STORAGE, trimmed)
-                        setOcrApiKey(trimmed)
-                        setShowApiKeyPanel(false)
-                      }}
-                    >
-                      儲存
-                    </button>
-                    {ocrApiKey && (
-                      <button
-                        className="button button--ghost"
-                        type="button"
-                        onClick={() => {
-                          window.localStorage.removeItem(OCR_API_KEY_STORAGE)
-                          setOcrApiKey('')
-                          setOcrApiKeyDraft('')
-                        }}
-                      >
-                        清除
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
 
               <div className="field-grid">
                 <label className="field">

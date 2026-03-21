@@ -1,17 +1,16 @@
 /**
  * PaddleOCR PP-OCRv5 wrapper (free, browser, ONNX Runtime Web)
  *
- * Three-tier OCR architecture:
- *   1. Claude Vision (API key required) — highest accuracy, paid
- *   2. PaddleOCR PP-OCRv5 (this file) — high accuracy, free, ~21MB model download
- *   3. Tesseract (fallback)            — lower accuracy, free, no download
+ * Two-tier OCR architecture:
+ *   1. PaddleOCR PP-OCRv5 (this file) — high accuracy, free, ~21MB model download
+ *   2. Tesseract (fallback)            — lower accuracy, free, no download
  *
  * TODO: Future — replace or supplement with Transformers.js + GLM-4V-Flash
  *   for WebGPU-accelerated multimodal understanding (zero download via CDN weights)
  */
 
-import type { OrtModule, PaddleOcrService as PaddleOcrServiceType } from 'paddleocr'
-import { extractNamesFromOcrText, extractRowsFromOcrText } from '../tools/marketOcr'
+import type { OrtModule, PaddleOcrService as PaddleOcrServiceType, RecognitionResult } from 'paddleocr'
+import { extractNamesFromOcrText } from '../tools/marketOcr'
 import type { VisionMarketRow } from './claudeVisionOcr'
 
 // ─── Singleton lazy-init ──────────────────────────────────────────────────────
@@ -96,7 +95,7 @@ async function initPaddleOcr(
 
   const service = await PaddleOcrService.createInstance({
     ort: ort as unknown as OrtModule,
-    detection: { modelBuffer: detBuf },
+    detection: { modelBuffer: detBuf, textPixelThreshold: 0.3, minimumAreaThreshold: 5 },
     recognition: { modelBuffer: recBuf, charactersDictionary: dict },
   })
 
@@ -177,19 +176,107 @@ async function blobToImageInput(blob: Blob): Promise<{ width: number; height: nu
   }
 }
 
+// ─── Bounding-box based row extraction ───────────────────────────────────────
+
+/**
+ * Group OCR results into visual rows by Y-proximity, then extract
+ * market board fields (item name + price + quantity) from each row.
+ *
+ * This is more reliable than parsing concatenated text because PaddleOCR
+ * returns each text region (name, price, qty) as separate bounding boxes.
+ */
+function extractMarketRowsFromResults(results: RecognitionResult[]): VisionMarketRow[] {
+  if (results.length === 0) return []
+
+  // Sort: top-to-bottom, then left-to-right
+  const sorted = [...results].sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x)
+
+  // Group into visual lines: two boxes are on the same line if their Y centres
+  // are within 60% of their average height.
+  const lines: RecognitionResult[][] = []
+  for (const r of sorted) {
+    const matched = lines.find((line) => {
+      const avgY = line.reduce((s, b) => s + b.box.y + b.box.height / 2, 0) / line.length
+      const avgH = line.reduce((s, b) => s + b.box.height, 0) / line.length
+      return Math.abs((r.box.y + r.box.height / 2) - avgY) < avgH * 0.6
+    })
+    if (matched) matched.push(r)
+    else lines.push([r])
+  }
+
+  const rows: VisionMarketRow[] = []
+  const seen = new Set<string>()
+
+  for (const line of lines) {
+    // Sort within line by X
+    line.sort((a, b) => a.box.x - b.box.x)
+
+    const nameParts: string[] = []
+    const numbers: number[] = []
+
+    for (const box of line) {
+      const text = box.text.trim()
+      // Pure/mostly numeric → price or quantity
+      const numOnly = text.replace(/[,，、.\s]/g, '')
+      if (/^\d{2,}$/.test(numOnly)) {
+        numbers.push(Number(numOnly))
+      } else if (text.length >= 2) {
+        // Could be item name segment
+        nameParts.push(text)
+      }
+    }
+
+    if (nameParts.length === 0 || numbers.length === 0) continue
+
+    const itemName = nameParts.join('').trim()
+    if (itemName.length < 2) continue
+
+    // Last big number = price; second-to-last small number = quantity
+    const sorted = [...numbers].sort((a, b) => b - a)
+    const price = sorted[0]
+    // Quantity: any number ≤ 999 that isn't the price
+    const quantityCandidate = numbers.filter((n) => n !== price && n <= 999)
+    const quantity = quantityCandidate.length > 0 ? Math.max(1, quantityCandidate[0]) : 1
+
+    if (price <= 0) continue
+
+    const key = itemName.toLocaleLowerCase('zh-TW')
+    if (seen.has(key)) continue
+    seen.add(key)
+
+    rows.push({ itemName, price, quantity })
+  }
+
+  return rows
+}
+
+/** 結果轉純文字（用於 debug textarea 顯示） */
+export function paddleResultsToText(results: RecognitionResult[]): string {
+  if (results.length === 0) return ''
+  const sorted = [...results].sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x)
+  return sorted.map((r) => r.text).join('\n')
+}
+
 // ─── Public OCR functions ─────────────────────────────────────────────────────
+
+export interface PaddleOcrMarketResult {
+  rows: VisionMarketRow[]
+  rawText: string  // raw recognized text for display/debugging
+}
 
 /** 市場板截圖 → 道具名稱 + 價格 + 數量（PaddleOCR 版） */
 export async function paddleOcrMarket(
   imageBlob: Blob,
   onProgress?: (p: PaddleLoadProgress) => void,
-): Promise<VisionMarketRow[]> {
+): Promise<PaddleOcrMarketResult> {
   const ocr = await getPaddleOcr(onProgress)
   const input = await blobToImageInput(imageBlob)
-  const results = await ocr.recognize(input)
-  const processed = ocr.processRecognition(results)
-  const rows = extractRowsFromOcrText(processed.text)
-  return rows.map((r) => ({ itemName: r.itemName, price: r.price, quantity: r.quantity }))
+  const results = await ocr.recognize(input, {
+    ordering: { sameLineThresholdRatio: 0.5 },
+  })
+  const rawText = paddleResultsToText(results)
+  const rows = extractMarketRowsFromResults(results)
+  return { rows, rawText }
 }
 
 /** 任意截圖 → 道具名稱清單（PaddleOCR 版） */
