@@ -262,6 +262,8 @@ export type CollectionStatus = 'planned' | 'active' | 'completed'
 export interface CollectionEntry {
   id: string
   name: string
+  /** 繁體中文名稱（NPC 名或部落名） */
+  tcName?: string
   category: CollectionCategoryId
   expansion: CollectionExpansionId
   patch: string
@@ -272,6 +274,16 @@ export interface CollectionEntry {
   rewardSummary: string[]
   notes?: string
   sourceUrl?: string
+  /**
+   * 製作相關配方名稱（繁體中文）。
+   * 用於「相關任務」頁快速帶入配方搜尋。
+   * 可為部分資料（標示 ★ 表示當前版本重點項目）。
+   */
+  craftItems?: string[]
+  /** 可使用的 DoH 職業（空陣列 = 全職業可） */
+  craftJobs?: string[]
+  /** 配方等級範圍 [min, max] */
+  levelRange?: [number, number]
 }
 
 export interface CollectionTrackerState {

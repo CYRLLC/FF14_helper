@@ -347,7 +347,7 @@ function CraftPage() {
       })()
       if (!categoryMatch) return false
       if (!keyword) return true
-      return [entry.name, entry.location, entry.unlockSummary, ...entry.rewardSummary]
+      return [entry.name, entry.tcName ?? '', entry.location, entry.unlockSummary, ...entry.rewardSummary, ...(entry.craftItems ?? [])]
         .join(' ')
         .toLocaleLowerCase('zh-TW')
         .includes(keyword)
@@ -384,15 +384,15 @@ function CraftPage() {
     setMessage(`已套用範例配方：${presetCopy[presetId]?.label ?? preset.id}。`)
   }
 
-  async function handleRecipeSearch(): Promise<void> {
-    const term = searchQuery.trim()
-    if (term.length < 2) {
+  async function performSearch(term: string): Promise<void> {
+    const trimmed = term.trim()
+    if (trimmed.length < 2) {
       setMessage('請至少輸入 2 個字元再搜尋。')
       return
     }
     setSearchLoading(true)
     try {
-      const [recipes, items] = await Promise.all([searchRecipeResults(term, 8), searchXivapi(term, 'Item', 8)])
+      const [recipes, items] = await Promise.all([searchRecipeResults(trimmed, 8), searchXivapi(trimmed, 'Item', 8)])
       setRecipeResults(recipes)
       setItemResults(items)
       setMessage(`已找到 ${recipes.length} 筆配方結果與 ${items.length} 筆道具結果。`)
@@ -401,6 +401,10 @@ function CraftPage() {
     } finally {
       setSearchLoading(false)
     }
+  }
+
+  async function handleRecipeSearch(): Promise<void> {
+    await performSearch(searchQuery)
   }
 
   async function applyRecipeFromRow(rowId: number): Promise<void> {
@@ -488,11 +492,13 @@ function CraftPage() {
   }
 
   function handleTaskSearch(query: string): void {
-    setSearchQuery(query)
+    const term = query.replace('★', '').trim()
+    setSearchQuery(term)
     setActiveTab('recipe')
     window.setTimeout(() => {
       searchInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       searchInputRef.current?.focus()
+      void performSearch(term)
     }, 50)
   }
 
@@ -1065,29 +1071,35 @@ function CraftPage() {
               {relevantTasks.map((entry) => (
                 <article key={entry.id} className="history-item">
                   <div className="history-item__top">
-                    <strong>{entry.name}</strong>
+                    <strong>{entry.tcName ?? entry.name}</strong>
                     <span className="badge">{entry.category === 'custom-deliveries' ? '老主顧' : '友好部落'}</span>
+                    {entry.levelRange ? <span className="badge">Lv.{entry.levelRange[0]}–{entry.levelRange[1]}</span> : null}
                   </div>
+                  {entry.tcName ? <p className="muted" style={{ marginBottom: '0.15rem' }}>{entry.name}</p> : null}
                   <p className="muted">
                     {entry.location} | Patch {entry.patch} | {entry.supportRoles.map((role) => formatSupportRole(role)).join(' / ')}
                   </p>
-                  {entry.rewardSummary.length > 0 ? (
-                    <div className="badge-row">
-                      {entry.rewardSummary.map((item) => (
-                        <button
-                          key={item}
-                          className="choice-button"
-                          onClick={() => handleTaskSearch(item)}
-                          title={`以「${item}」搜尋配方`}
-                          type="button"
-                        >
-                          {item}
-                        </button>
-                      ))}
+                  {entry.craftItems && entry.craftItems.length > 0 ? (
+                    <div className="badge-row" style={{ marginTop: '0.4rem' }}>
+                      <span className="muted" style={{ alignSelf: 'center', fontSize: '0.8rem' }}>製作道具：</span>
+                      {entry.craftItems.map((item) => {
+                        const term = item.replace('★', '').trim()
+                        return (
+                          <button
+                            key={item}
+                            className="choice-button"
+                            onClick={() => handleTaskSearch(term)}
+                            title={`搜尋「${term}」配方`}
+                            type="button"
+                          >
+                            {item}
+                          </button>
+                        )
+                      })}
                     </div>
                   ) : null}
                   <div className="button-row">
-                    <button className="button button--ghost" onClick={() => handleTaskSearch(entry.name)} type="button">帶入搜尋</button>
+                    <button className="button button--ghost" onClick={() => handleTaskSearch(entry.tcName ?? entry.name)} type="button">帶入搜尋</button>
                     <Link className="button button--ghost" to="/collection">前往收藏追蹤</Link>
                     {entry.sourceUrl ? <a className="button button--ghost" href={entry.sourceUrl} rel="noreferrer" target="_blank">查看來源</a> : null}
                   </div>
