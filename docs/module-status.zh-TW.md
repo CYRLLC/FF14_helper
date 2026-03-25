@@ -79,6 +79,9 @@
 
 **關鍵字：查價頁、MarketPage、OCR、Universalis、Chocobo、Moogle、道具查詢、工作表、試算**
 
+補充筆記：
+[`ocr-investigation.zh-TW.md`](./ocr-investigation.zh-TW.md) — 參考站 OCR 精準度調查、差距分析與重構順序。
+
 查價模組的完整對齊規格已另寫成 [`market-parity-spec.zh-TW.md`](./market-parity-spec.zh-TW.md)。  
 本章保留目前程式狀態摘要；若要規劃和參考站對齊的下一階段開發，請以該文件為主。
 
