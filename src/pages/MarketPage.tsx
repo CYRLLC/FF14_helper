@@ -9,6 +9,7 @@ import {
 import {
   fetchItemSummary,
   searchEquipmentByItemLevel,
+  searchRecipesByCraftTypeAndItemLevelRange,
   searchXivapi,
   searchRecipeResults,
   type XivapiEquipmentSearchResult,
@@ -136,6 +137,20 @@ interface MsqSearchResult {
   notMarketable: boolean
 }
 
+interface CrafterSearchResult {
+  itemRowId: number
+  itemName: string
+  craftTypeIds: number[]
+  craftJobLabels: string[]
+  itemLevel: number
+  equipLevel: number
+  chocoboMinPrice?: number
+  moogleMinPrice?: number
+  chocoboAvgPrice?: number
+  moogleAvgPrice?: number
+  notMarketable: boolean
+}
+
 const SCOPE_CHOCOBO: MarketScopeSelection = { region: 'JP', mode: 'world', scopeKey: 'Chocobo' }
 const SCOPE_MOOGLE: MarketScopeSelection = { region: 'EU', mode: 'world', scopeKey: 'Moogle' }
 const MARKET_SCOPE_META: Record<
@@ -214,6 +229,17 @@ const MSQ_COMBAT_JOB_TAGS = new Set([
   'VPR',
   'PCT',
 ])
+
+const CRAFTER_JOB_OPTIONS = [
+  { craftTypeId: 0, label: '刻木匠', shortLabel: 'CRP' },
+  { craftTypeId: 1, label: '鍛鐵匠', shortLabel: 'BSM' },
+  { craftTypeId: 2, label: '鑄甲匠', shortLabel: 'ARM' },
+  { craftTypeId: 3, label: '雕金匠', shortLabel: 'GSM' },
+  { craftTypeId: 4, label: '製革匠', shortLabel: 'LTW' },
+  { craftTypeId: 5, label: '裁衣匠', shortLabel: 'WVR' },
+  { craftTypeId: 6, label: '鍊金術士', shortLabel: 'ALC' },
+  { craftTypeId: 7, label: '廚師', shortLabel: 'CUL' },
+] as const
 
 const TABS: Array<{ id: MarketTab; label: string }> = [
   { id: 'import', label: '截圖匯入' },
@@ -458,6 +484,18 @@ function buildMsqCategoryQuery(category: MsqCategoryFilter): string | undefined 
   }
 }
 
+function crafterRangeLimit(jobCount: number): number {
+  if (jobCount <= 0) return 10
+  if (jobCount === 1) return 50
+  if (jobCount === 2) return 30
+  if (jobCount === 3) return 20
+  return 10
+}
+
+function crafterJobLabel(craftTypeId: number): string {
+  return CRAFTER_JOB_OPTIONS.find((option) => option.craftTypeId === craftTypeId)?.label ?? `Craft #${craftTypeId}`
+}
+
 function parseBulkRows(value: string): MarketOcrParsedRow[] {
   return value
     .split(/\r?\n/gu)
@@ -583,6 +621,13 @@ function MarketPage() {
   const [msqResults, setMsqResults] = useState<MsqSearchResult[]>([])
   const [msqBusy, setMsqBusy] = useState(false)
   const [msqError, setMsqError] = useState<string | null>(null)
+  const [crafterSelectedJobs, setCrafterSelectedJobs] = useState<number[]>([])
+  const [crafterMinLevelInput, setCrafterMinLevelInput] = useState('')
+  const [crafterMaxLevelInput, setCrafterMaxLevelInput] = useState('')
+  const [crafterResults, setCrafterResults] = useState<CrafterSearchResult[]>([])
+  const [crafterBusy, setCrafterBusy] = useState(false)
+  const [crafterError, setCrafterError] = useState<string | null>(null)
+  const [crafterNotice, setCrafterNotice] = useState<string | null>(null)
   const [detailTargetServer, setDetailTargetServer] = useState<MarketOcrTargetServer>('chocobo')
   const [detailSelection, setDetailSelection] = useState<MarketDetailSelection | null>(null)
   const [detailSnapshot, setDetailSnapshot] = useState<UniversalisMarketSnapshot | null>(null)
@@ -694,6 +739,20 @@ function MarketPage() {
 
   const msqItemLevelValue = Number(msqItemLevelInput)
   const msqItemLevelValid = Number.isInteger(msqItemLevelValue) && msqItemLevelValue >= 1 && msqItemLevelValue <= 999
+  const crafterMinLevelValue = Number(crafterMinLevelInput)
+  const crafterMaxLevelValue = Number(crafterMaxLevelInput)
+  const crafterMaxRange = crafterRangeLimit(crafterSelectedJobs.length)
+  const crafterLevelBoundsValid =
+    Number.isInteger(crafterMinLevelValue)
+    && Number.isInteger(crafterMaxLevelValue)
+    && crafterMinLevelValue >= 1
+    && crafterMaxLevelValue >= 1
+    && crafterMinLevelValue <= 999
+    && crafterMaxLevelValue <= 999
+    && crafterMinLevelValue <= crafterMaxLevelValue
+  const crafterRangeValid =
+    crafterLevelBoundsValid && (crafterMaxLevelValue - crafterMinLevelValue + 1) <= crafterMaxRange
+  const crafterSearchReady = crafterSelectedJobs.length > 0 && crafterRangeValid
 
   function pushActivity(messageText: string): void {
     const nextEntry = buildLogEntry(messageText)
@@ -948,6 +1007,21 @@ function MarketPage() {
     if (!name) return
     setQueryNames((current) => [...current, { id: createId('q'), name }])
     setQueryManualInput('')
+  }
+
+  function toggleCrafterJob(craftTypeId: number): void {
+    setCrafterSelectedJobs((current) => {
+      if (current.includes(craftTypeId)) {
+        return current.filter((value) => value !== craftTypeId)
+      }
+
+      if (current.length >= 4) {
+        setCrafterError('最多只能選擇 4 個製作職。')
+        return current
+      }
+
+      return [...current, craftTypeId]
+    })
   }
 
   function rememberViewedItem(itemRowId: number, itemName: string): void {
@@ -1241,6 +1315,140 @@ function MarketPage() {
     }
   }
 
+  async function runCrafterSearch(): Promise<void> {
+    if (!crafterSearchReady) {
+      setCrafterError('請先選擇製作職，並輸入符合範圍限制的物品等級。')
+      setCrafterResults([])
+      return
+    }
+
+    setCrafterBusy(true)
+    setCrafterError(null)
+    setCrafterNotice(null)
+    setCrafterResults([])
+
+    try {
+      const recipeMatches = (
+        await Promise.all(
+          crafterSelectedJobs.map((craftTypeId) =>
+            searchRecipesByCraftTypeAndItemLevelRange(
+              craftTypeId,
+              crafterMinLevelValue,
+              crafterMaxLevelValue,
+              100,
+              'en',
+            ),
+          ),
+        )
+      ).flat()
+
+      const aggregatedMatches = new Map<
+        number,
+        {
+          itemRowId: number
+          itemName: string
+          craftTypeIds: Set<number>
+          craftJobLabels: Set<string>
+          itemLevel: number
+          equipLevel: number
+          isUntradable: boolean
+        }
+      >()
+
+      for (const match of recipeMatches) {
+        const existing = aggregatedMatches.get(match.itemRowId)
+        if (existing) {
+          existing.craftTypeIds.add(match.craftTypeId)
+          existing.craftJobLabels.add(crafterJobLabel(match.craftTypeId))
+          existing.itemLevel = Math.max(existing.itemLevel, match.itemLevel)
+          existing.equipLevel = Math.max(existing.equipLevel, match.levelEquip)
+          existing.isUntradable = existing.isUntradable || match.isUntradable
+          continue
+        }
+
+        aggregatedMatches.set(match.itemRowId, {
+          itemRowId: match.itemRowId,
+          itemName: match.itemName,
+          craftTypeIds: new Set([match.craftTypeId]),
+          craftJobLabels: new Set([crafterJobLabel(match.craftTypeId)]),
+          itemLevel: match.itemLevel,
+          equipLevel: match.levelEquip,
+          isUntradable: match.isUntradable,
+        })
+      }
+
+      let mergedMatches = Array.from(aggregatedMatches.values()).sort((left, right) => {
+        if (left.itemLevel !== right.itemLevel) return left.itemLevel - right.itemLevel
+        if (left.equipLevel !== right.equipLevel) return left.equipLevel - right.equipLevel
+        return left.itemName.localeCompare(right.itemName)
+      })
+
+      if (mergedMatches.length === 0) {
+        setCrafterError('找不到符合條件的製作成果。')
+        return
+      }
+
+      if (mergedMatches.length > 80) {
+        mergedMatches = mergedMatches.slice(0, 80)
+        setCrafterNotice('結果數量過多，第一版先顯示前 80 筆，避免查價請求過重。')
+      }
+
+      const itemIds = mergedMatches.map((item) => item.itemRowId)
+      const [chocoboData, moogleData, localizedNames] = await Promise.all([
+        fetchItemMarketBatch(SCOPE_CHOCOBO, itemIds),
+        fetchItemMarketBatch(SCOPE_MOOGLE, itemIds),
+        Promise.all(
+          mergedMatches.map(async (item) => {
+            const cachedName = itemNameCacheRef.current.get(item.itemRowId)
+            if (cachedName) {
+              return [item.itemRowId, cachedName] as const
+            }
+
+            try {
+              const summary = await fetchItemSummary(item.itemRowId)
+              itemNameCacheRef.current.set(item.itemRowId, summary.name)
+              return [item.itemRowId, summary.name] as const
+            } catch {
+              return [item.itemRowId, item.itemName] as const
+            }
+          }),
+        ),
+      ])
+
+      const localizedNameMap = new Map<number, string>(localizedNames)
+      const nextResults = mergedMatches.map((item): CrafterSearchResult => {
+        const chocoboSnapshot = chocoboData.snapshots.get(item.itemRowId)
+        const moogleSnapshot = moogleData.snapshots.get(item.itemRowId)
+
+        return {
+          itemRowId: item.itemRowId,
+          itemName: localizedNameMap.get(item.itemRowId) ?? item.itemName,
+          craftTypeIds: Array.from(item.craftTypeIds).sort((left, right) => left - right),
+          craftJobLabels: Array.from(item.craftJobLabels),
+          itemLevel: item.itemLevel,
+          equipLevel: item.equipLevel,
+          chocoboMinPrice: chocoboSnapshot?.lowestPrice,
+          moogleMinPrice: moogleSnapshot?.lowestPrice,
+          chocoboAvgPrice: chocoboSnapshot?.averagePrice,
+          moogleAvgPrice: moogleSnapshot?.averagePrice,
+          notMarketable: item.isUntradable || (chocoboData.unresolved.has(item.itemRowId) && moogleData.unresolved.has(item.itemRowId)),
+        }
+      })
+
+      setCrafterResults(nextResults)
+
+      const firstResult = nextResults[0]
+      if (firstResult) {
+        openMarketDetail(firstResult.itemRowId, firstResult.itemName, detailTargetServer)
+      }
+    } catch (error) {
+      setCrafterError(getErrorMessage(error))
+      setCrafterResults([])
+    } finally {
+      setCrafterBusy(false)
+    }
+  }
+
   async function fetchItemRecipe(queryId: string, itemName: string): Promise<void> {
     setQueryResults((current) =>
       current.map((r) => (r.queryId === queryId ? { ...r, recipeStatus: 'loading' } : r)),
@@ -1278,13 +1486,16 @@ function MarketPage() {
 
     const queryResultMatch = queryResults.find((result) => result.itemRowId === detailSelection.itemRowId)
     const msqResultMatch = msqResults.find((result) => result.itemRowId === detailSelection.itemRowId)
+    const crafterResultMatch = crafterResults.find((result) => result.itemRowId === detailSelection.itemRowId)
     const derivedChocoboPrice =
       queryResultMatch?.chocoboMinPrice
       ?? msqResultMatch?.chocoboMinPrice
+      ?? crafterResultMatch?.chocoboMinPrice
       ?? (detailTargetServer === 'chocobo' ? detailSummary.lowestPrice ?? 0 : 0)
     const derivedMooglePrice =
       queryResultMatch?.moogleMinPrice
       ?? msqResultMatch?.moogleMinPrice
+      ?? crafterResultMatch?.moogleMinPrice
       ?? (detailTargetServer === 'moogle' ? detailSummary.lowestPrice ?? 0 : 0)
 
     const normalizedName = detailSelection.itemName.trim()
@@ -2141,6 +2352,171 @@ function MarketPage() {
 
                         <div className="detail-list">
                           {result.classJobCategoryName ? <div><strong>職業：</strong>{result.classJobCategoryName}</div> : null}
+                          {result.chocoboMinPrice != null
+                            ? <div><strong>陸行鳥最低：</strong>{formatGil(result.chocoboMinPrice)}</div>
+                            : <div><strong>陸行鳥最低：</strong>暫無資料</div>}
+                          {result.moogleMinPrice != null
+                            ? <div><strong>莫古力最低：</strong>{formatGil(result.moogleMinPrice)}</div>
+                            : <div><strong>莫古力最低：</strong>暫無資料</div>}
+                          {result.chocoboAvgPrice != null ? <div><strong>陸行鳥平均：</strong>{formatGil(result.chocoboAvgPrice)}</div> : null}
+                          {result.moogleAvgPrice != null ? <div><strong>莫古力平均：</strong>{formatGil(result.moogleAvgPrice)}</div> : null}
+                        </div>
+
+                        <div className="button-row">
+                          <button
+                            className="button button--ghost"
+                            onClick={() => openMarketDetail(result.itemRowId, result.itemName, 'chocobo')}
+                            type="button"
+                          >
+                            查看陸行鳥詳情
+                          </button>
+                          <button
+                            className="button button--ghost"
+                            onClick={() => openMarketDetail(result.itemRowId, result.itemName, 'moogle')}
+                            type="button"
+                          >
+                            查看莫古力詳情
+                          </button>
+                          <a
+                            className="button button--ghost"
+                            href={garlandLink(result.itemRowId)}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            Garland Tools
+                          </a>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+            </article>
+
+            <article className="page-card" style={{ gridColumn: '1 / -1' }}>
+              <div className="section-heading">
+                <h2>製作職找價</h2>
+                <p>
+                  參考 FFXIV Market 的 crafting inspiration，依製作職與物品等級範圍找出可製作成果，
+                  再比較陸行鳥與莫古力市場價格。
+                </p>
+              </div>
+
+              <div className="field">
+                <span className="field-label">製作職（最多 4 個）</span>
+                <div className="button-row">
+                  {CRAFTER_JOB_OPTIONS.map((option) => {
+                    const selected = crafterSelectedJobs.includes(option.craftTypeId)
+                    return (
+                      <button
+                        key={option.craftTypeId}
+                        className={selected ? 'button button--primary' : 'button button--ghost'}
+                        onClick={() => toggleCrafterJob(option.craftTypeId)}
+                        type="button"
+                      >
+                        {option.label}（{option.shortLabel}）
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <div className="field-grid">
+                <label className="field">
+                  <span className="field-label">最小物品等級</span>
+                  <input
+                    className="input-text"
+                    inputMode="numeric"
+                    max={999}
+                    min={1}
+                    onChange={(event) => setCrafterMinLevelInput(event.target.value)}
+                    placeholder="例如 100"
+                    type="number"
+                    value={crafterMinLevelInput}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">最大物品等級</span>
+                  <input
+                    className="input-text"
+                    inputMode="numeric"
+                    max={999}
+                    min={1}
+                    onChange={(event) => setCrafterMaxLevelInput(event.target.value)}
+                    placeholder="例如 120"
+                    type="number"
+                    value={crafterMaxLevelInput}
+                  />
+                </label>
+              </div>
+
+              <div className="badge-row">
+                <span className="badge">已選職業：{crafterSelectedJobs.length} / 4</span>
+                <span className="badge">目前範圍上限：{crafterMaxRange}</span>
+                {crafterLevelBoundsValid
+                  ? <span className="badge badge--positive">目前範圍：{crafterMaxLevelValue - crafterMinLevelValue + 1}</span>
+                  : null}
+              </div>
+
+              {!crafterRangeValid && crafterLevelBoundsValid ? (
+                <div className="callout">
+                  <span className="callout-title">範圍限制</span>
+                  <span className="callout-body">
+                    目前選了 {crafterSelectedJobs.length || 0} 個製作職，本輪最多只建議查 {crafterMaxRange} 個等級範圍。
+                  </span>
+                </div>
+              ) : null}
+
+              <div className="button-row">
+                <button
+                  className="button button--primary"
+                  disabled={crafterBusy || !crafterSearchReady}
+                  onClick={() => void runCrafterSearch()}
+                  type="button"
+                >
+                  {crafterBusy ? '查詢中⋯' : '查製作成果'}
+                </button>
+              </div>
+
+              {crafterNotice ? (
+                <div className="callout">
+                  <span className="callout-title">查詢提示</span>
+                  <span className="callout-body">{crafterNotice}</span>
+                </div>
+              ) : null}
+
+              {crafterError ? (
+                <div className="callout">
+                  <span className="callout-title">查詢狀態</span>
+                  <span className="callout-body">{crafterError}</span>
+                </div>
+              ) : null}
+
+              {crafterResults.length === 0 ? (
+                <div className="empty-state">
+                  <strong>尚未執行製作職找價</strong>
+                  <p>先選擇製作職與物品等級範圍。第一版會限制結果量，優先給出可操作的市場比價清單。</p>
+                </div>
+              ) : (
+                <div className="history-list">
+                  {crafterResults.map((result) => {
+                    const cheaper = cheaperServer(result.chocoboMinPrice, result.moogleMinPrice)
+                    return (
+                      <article key={`${result.itemRowId}-craft`} className="history-item">
+                        <div className="history-item__top">
+                          <strong>{result.itemName}</strong>
+                          <span className="badge">{result.craftJobLabels.join(' / ')}</span>
+                          <span className="badge">物品等級 {result.itemLevel}</span>
+                          <span className="badge">
+                            {result.equipLevel > 1 ? `裝備等級 ${result.equipLevel}` : '非裝備道具'}
+                          </span>
+                          {result.notMarketable && <span className="badge">不可交易</span>}
+                          {!result.notMarketable && cheaper && (
+                            <span className="badge badge--positive">較便宜：{cheaper}</span>
+                          )}
+                        </div>
+
+                        <div className="detail-list">
                           {result.chocoboMinPrice != null
                             ? <div><strong>陸行鳥最低：</strong>{formatGil(result.chocoboMinPrice)}</div>
                             : <div><strong>陸行鳥最低：</strong>暫無資料</div>}

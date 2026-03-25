@@ -35,6 +35,7 @@ interface UniversalisRawResponse {
 }
 
 const UNIVERSALIS_BASE_URL = 'https://universalis.app/api/v2'
+const UNIVERSALIS_BATCH_LIMIT = 100
 
 interface UniversalisBatchRawResponse {
   items?: Record<string, UniversalisRawResponse>
@@ -127,45 +128,51 @@ export async function fetchItemMarketBatch(
   if (itemIds.length === 0) return { snapshots: new Map(), unresolved: new Set() }
 
   const ids = [...new Set(itemIds.map((id) => Math.max(1, Math.round(id))))]
-  const params = new URLSearchParams({ listings: '3', entries: '0' })
-  const url = `${UNIVERSALIS_BASE_URL}/${sanitizeScopeKey(scope.scopeKey)}/${ids.join(',')}?${params.toString()}`
-
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`Universalis batch request failed with HTTP ${response.status}.`)
-  }
-
-  const payload = (await response.json()) as UniversalisRawResponse | UniversalisBatchRawResponse
   const snapshots = new Map<number, UniversalisMarketSnapshot>()
+  const unresolved = new Set<number>()
+  const fetchedAt = new Date().toISOString()
 
-  // API returns single-item format when querying 1 item, multi-item format otherwise
-  const itemsMap: Record<string, UniversalisRawResponse> =
-    'items' in payload && payload.items != null
-      ? payload.items
-      : { [ids[0].toString()]: payload as UniversalisRawResponse }
+  for (let index = 0; index < ids.length; index += UNIVERSALIS_BATCH_LIMIT) {
+    const batch = ids.slice(index, index + UNIVERSALIS_BATCH_LIMIT)
+    const params = new URLSearchParams({ listings: '3', entries: '0' })
+    const url = `${UNIVERSALIS_BASE_URL}/${sanitizeScopeKey(scope.scopeKey)}/${batch.join(',')}?${params.toString()}`
 
-  const unresolved = new Set<number>(
-    'unresolvedItems' in payload && Array.isArray(payload.unresolvedItems) ? payload.unresolvedItems : [],
-  )
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error(`Universalis batch request failed with HTTP ${response.status}.`)
+    }
 
-  for (const [idStr, data] of Object.entries(itemsMap)) {
-    const numId = Number(idStr)
-    if (isNaN(numId)) continue
-    const listings = (data.listings ?? []).map(normalizeListing).filter((e): e is UniversalisListing => e !== null)
-    snapshots.set(numId, {
-      itemId: numId,
-      scopeLabel: scope.scopeKey,
-      lowestPrice: typeof data.minPrice === 'number' ? data.minPrice : undefined,
-      highestPrice: typeof data.maxPrice === 'number' ? data.maxPrice : undefined,
-      averagePrice: typeof data.averagePrice === 'number' ? data.averagePrice : undefined,
-      averagePriceNq: typeof data.averagePriceNQ === 'number' ? data.averagePriceNQ : undefined,
-      averagePriceHq: typeof data.averagePriceHQ === 'number' ? data.averagePriceHQ : undefined,
-      regularSaleVelocity: typeof data.regularSaleVelocity === 'number' ? data.regularSaleVelocity : undefined,
-      recentHistoryCount: 0,
-      listings,
-      recentHistory: [],
-      fetchedAt: new Date().toISOString(),
-    })
+    const payload = (await response.json()) as UniversalisRawResponse | UniversalisBatchRawResponse
+
+    // API returns single-item format when querying 1 item, multi-item format otherwise
+    const itemsMap: Record<string, UniversalisRawResponse> =
+      'items' in payload && payload.items != null
+        ? payload.items
+        : { [batch[0].toString()]: payload as UniversalisRawResponse }
+
+    for (const itemId of 'unresolvedItems' in payload && Array.isArray(payload.unresolvedItems) ? payload.unresolvedItems : []) {
+      unresolved.add(itemId)
+    }
+
+    for (const [idStr, data] of Object.entries(itemsMap)) {
+      const numId = Number(idStr)
+      if (isNaN(numId)) continue
+      const listings = (data.listings ?? []).map(normalizeListing).filter((e): e is UniversalisListing => e !== null)
+      snapshots.set(numId, {
+        itemId: numId,
+        scopeLabel: scope.scopeKey,
+        lowestPrice: typeof data.minPrice === 'number' ? data.minPrice : undefined,
+        highestPrice: typeof data.maxPrice === 'number' ? data.maxPrice : undefined,
+        averagePrice: typeof data.averagePrice === 'number' ? data.averagePrice : undefined,
+        averagePriceNq: typeof data.averagePriceNQ === 'number' ? data.averagePriceNQ : undefined,
+        averagePriceHq: typeof data.averagePriceHQ === 'number' ? data.averagePriceHQ : undefined,
+        regularSaleVelocity: typeof data.regularSaleVelocity === 'number' ? data.regularSaleVelocity : undefined,
+        recentHistoryCount: 0,
+        listings,
+        recentHistory: [],
+        fetchedAt,
+      })
+    }
   }
 
   return { snapshots, unresolved }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildXivapiEquipmentSearchUrl,
+  buildXivapiRecipeRangeSearchUrl,
   buildXivapiRecipeSearchUrl,
   buildXivapiSearchUrl,
   buildXivapiSheetRowUrl,
@@ -42,5 +43,14 @@ describe('xivapi urls', () => {
     expect(url).toContain('fields=Name%2CLevelItem%2CLevelEquip%2CItemUICategory.Name%2CClassJobCategory.Name%2CIsUntradable')
     expect(url).toContain('limit=80')
     expect(url).toContain('query=LevelItem%3D120+LevelEquip%3E%3D1+ItemUICategory%3D34')
+  })
+
+  it('builds a recipe range search URL for a crafting job and item-level range', () => {
+    const url = buildXivapiRecipeRangeSearchUrl(1, 100, 120, 90)
+
+    expect(url).toContain('sheets=Recipe')
+    expect(url).toContain('limit=90')
+    expect(url).toContain('fields=ItemResult.Name%2CCraftType.Name%2CItemResult.LevelItem%2CItemResult.LevelEquip%2CItemResult.row_id%2CItemResult.IsUntradable')
+    expect(url).toContain('query=CraftType%3D1+ItemResult.LevelItem%3E%3D100+ItemResult.LevelItem%3C%3D120')
   })
 })

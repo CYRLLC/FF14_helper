@@ -29,6 +29,17 @@ export interface XivapiRecipeSearchResult extends XivapiSearchResult {
   itemRowId?: number
 }
 
+export interface XivapiRecipeRangeSearchResult {
+  recipeRowId: number
+  itemRowId: number
+  itemName: string
+  craftTypeId: number
+  craftTypeName: string
+  itemLevel: number
+  levelEquip: number
+  isUntradable: boolean
+}
+
 export interface XivapiRecipeDetail {
   rowId: number
   name: string
@@ -137,6 +148,30 @@ export function buildXivapiSearchUrl(term: string, sheet: XivapiSheet, limit = 8
 export function buildXivapiRecipeSearchUrl(term: string, limit = 8): string {
   const field = 'ItemResult.Name,CraftType.Name'
   const params = buildSearchParams('Recipe', field, `ItemResult.Name~"${sanitizeTerm(term)}"`, limit)
+  return `${XIVAPI_SEARCH_URL}?${params.toString()}`
+}
+
+export function buildXivapiRecipeRangeSearchUrl(
+  craftTypeId: number,
+  itemLevelMin: number,
+  itemLevelMax: number,
+  limit = 100,
+  language: XivapiLanguage = 'en',
+): string {
+  const fields = [
+    'ItemResult.Name',
+    'CraftType.Name',
+    'ItemResult.LevelItem',
+    'ItemResult.LevelEquip',
+    'ItemResult.row_id',
+    'ItemResult.IsUntradable',
+  ]
+  const safeCraftTypeId = Math.max(0, Math.round(craftTypeId))
+  const safeMin = Math.max(1, Math.min(999, Math.round(Math.min(itemLevelMin, itemLevelMax))))
+  const safeMax = Math.max(1, Math.min(999, Math.round(Math.max(itemLevelMin, itemLevelMax))))
+  const query = `CraftType=${safeCraftTypeId} ItemResult.LevelItem>=${safeMin} ItemResult.LevelItem<=${safeMax}`
+  const params = buildSearchParams('Recipe', fields.join(','), query, limit, language, 100)
+
   return `${XIVAPI_SEARCH_URL}?${params.toString()}`
 }
 
@@ -278,6 +313,40 @@ export async function searchRecipeResults(term: string, limit = 8): Promise<Xiva
       itemRowId: getNestedNumber(result.fields, ['ItemResult', 'row_id']) ?? undefined,
       score: typeof result.score === 'number' ? result.score : 0,
     }))
+}
+
+export async function searchRecipesByCraftTypeAndItemLevelRange(
+  craftTypeId: number,
+  itemLevelMin: number,
+  itemLevelMax: number,
+  limit = 100,
+  language: XivapiLanguage = 'en',
+): Promise<XivapiRecipeRangeSearchResult[]> {
+  const response = await fetch(
+    buildXivapiRecipeRangeSearchUrl(craftTypeId, itemLevelMin, itemLevelMax, limit, language),
+  )
+  if (!response.ok) {
+    throw new Error(`XIVAPI recipe range search failed with HTTP ${response.status}.`)
+  }
+
+  const payload = (await response.json()) as XivapiSearchResponse
+  const safeMin = Math.max(1, Math.min(999, Math.round(Math.min(itemLevelMin, itemLevelMax))))
+
+  return (payload.results ?? [])
+    .filter((result): result is Required<Pick<XivapiRawResult, 'row_id'>> & XivapiRawResult => {
+      return typeof result.row_id === 'number'
+    })
+    .map((result) => ({
+      recipeRowId: result.row_id,
+      itemRowId: getNestedNumber(result.fields, ['ItemResult', 'row_id']) ?? 0,
+      itemName: getNestedString(result.fields, ['ItemResult', 'fields', 'Name']) ?? '(Unnamed Recipe Result)',
+      craftTypeId: getNestedNumber(result.fields, ['CraftType', 'row_id']) ?? Math.max(0, Math.round(craftTypeId)),
+      craftTypeName: getNestedString(result.fields, ['CraftType', 'fields', 'Name']) ?? 'Unknown',
+      itemLevel: getNestedNumber(result.fields, ['ItemResult', 'fields', 'LevelItem', 'value']) ?? safeMin,
+      levelEquip: getNestedNumber(result.fields, ['ItemResult', 'fields', 'LevelEquip']) ?? 0,
+      isUntradable: getNestedBoolean(result.fields, ['ItemResult', 'fields', 'IsUntradable']) ?? false,
+    }))
+    .filter((result) => result.itemRowId > 0)
 }
 
 export async function fetchRecipeDetails(rowId: number): Promise<XivapiRecipeDetail> {
