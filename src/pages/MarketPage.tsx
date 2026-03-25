@@ -30,6 +30,7 @@ import {
   type MarketOcrParsedRow,
   type MarketOcrTargetServer,
 } from '../tools/marketOcr'
+import { correctMarketItemName } from '../tools/marketItemSearch'
 import type { MarketScopeSelection, UniversalisMarketSnapshot } from '../types'
 import { getErrorMessage } from '../utils/errors'
 import {
@@ -760,6 +761,71 @@ function MarketPage() {
     setMessage(messageText)
   }
 
+  async function buildPreviewRows(parsedRows: MarketOcrParsedRow[]): Promise<PreviewRow[]> {
+    const correctedRows = await Promise.all(
+      parsedRows.map(async (row): Promise<PreviewRow> => {
+        const itemName = row.itemName.trim()
+        if (itemName.length < 2) {
+          return {
+            ...row,
+            itemName,
+            id: createId('preview'),
+            checked: true,
+          }
+        }
+
+        try {
+          const correction = await correctMarketItemName(itemName)
+          return {
+            ...row,
+            itemName: correction.match?.itemName ?? itemName,
+            id: createId('preview'),
+            checked: true,
+            verifyStatus: correction.status,
+          }
+        } catch {
+          return {
+            ...row,
+            itemName,
+            id: createId('preview'),
+            checked: true,
+          }
+        }
+      }),
+    )
+
+    return correctedRows
+  }
+
+  async function buildQueryNames(names: string[]): Promise<QueryName[]> {
+    const correctedNames = await Promise.all(
+      names.map(async (name) => {
+        const trimmed = name.trim()
+        if (trimmed.length < 2) return ''
+
+        try {
+          const correction = await correctMarketItemName(trimmed)
+          return correction.match?.itemName ?? trimmed
+        } catch {
+          return trimmed
+        }
+      }),
+    )
+
+    const nextNames: QueryName[] = []
+    const seen = new Set<string>()
+    for (const itemName of correctedNames) {
+      const trimmed = itemName.trim()
+      if (trimmed.length < 2) continue
+      const key = trimmed.toLocaleLowerCase('zh-TW')
+      if (seen.has(key)) continue
+      seen.add(key)
+      nextNames.push({ id: createId('q'), name: trimmed })
+    }
+
+    return nextNames
+  }
+
   async function runOcr(file: Blob, source: ImportSource): Promise<void> {
     setOcrBusy(true)
     setOcrError(null)
@@ -775,7 +841,7 @@ function MarketPage() {
         const { rows: paddleRows, rawText } = await paddleOcrMarket(file, (p) => setPaddleLoadProgress(p))
         setPaddleLoadProgress(null)
         setOcrText(rawText || `PaddleOCR 辨識到 ${paddleRows.length} 筆資料。`)
-        setOcrPreviewRows(paddleRows.map((r) => ({ ...r, id: createId('preview'), checked: true })))
+        setOcrPreviewRows(await buildPreviewRows(paddleRows))
         if (paddleRows.length === 0) {
           setOcrError('PaddleOCR 未辨識出市場板資料。下方文字區域可查看原始辨識內容。')
         }
@@ -792,7 +858,7 @@ function MarketPage() {
         const nextText = result.data.text?.trim() ?? ''
         const parsedRows = extractRowsFromOcrText(nextText)
         setOcrText(nextText)
-        setOcrPreviewRows(parsedRows.map((row) => ({ ...row, id: createId('preview'), checked: true })))
+        setOcrPreviewRows(await buildPreviewRows(parsedRows))
         setOcrError(`PaddleOCR 失敗（${paddleErrMsg}），已改用 Tesseract。`)
       }
     } catch (error) {
@@ -856,9 +922,20 @@ function MarketPage() {
         const trimmed = row.itemName.trim()
         if (trimmed.length < 2) return { ...row, verifyStatus: 'unknown' }
         try {
-          const found = await searchXivapi(trimmed, 'Item', 1, 'chs')
+          const correction = await correctMarketItemName(trimmed)
+          if (correction.status === 'ok') {
+            return { ...row, itemName: correction.match?.itemName ?? trimmed, verifyStatus: 'ok' }
+          }
+          if (correction.status === 'corrected' && correction.match) {
+            return { ...row, itemName: correction.match.itemName, verifyStatus: 'corrected' }
+          }
+        } catch {
+          // Fall back to XIVAPI if the local OCR index is unavailable.
+        }
+        try {
+          const found = await searchXivapi(trimmed, 'Item', 5, 'chs')
           if (found.length === 0) return { ...row, verifyStatus: 'unknown' }
-          const apiName = found[0].name
+          const apiName = found.find((entry) => entry.name?.trim())?.name?.trim()
           if (!apiName) return { ...row, verifyStatus: 'unknown' }
           if (apiName === trimmed) return { ...row, verifyStatus: 'ok' }
           // 計算字元相似度，>= 50% 才自動修正
@@ -961,7 +1038,7 @@ function MarketPage() {
     try {
       try {
         const names = await paddleOcrQuery(file)
-        setQueryNames(names.map((name) => ({ id: createId('q'), name })))
+        setQueryNames(await buildQueryNames(names))
       } catch (paddleErr) {
         // Tesseract fallback
         const processedFile = await preprocessImageForOcr(file)
@@ -971,7 +1048,7 @@ function MarketPage() {
         const result = await worker.recognize(processedFile)
         await worker.terminate()
         const names = extractNamesFromOcrText(result.data.text?.trim() ?? '')
-        setQueryNames(names.map((name) => ({ id: createId('q'), name })))
+        setQueryNames(await buildQueryNames(names))
         setMessage(`PaddleOCR 失敗（${getErrorMessage(paddleErr)}），已改用 Tesseract。`)
       }
     } catch (error) {

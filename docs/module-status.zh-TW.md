@@ -88,12 +88,14 @@
 補記（2026-03-25）：
 - `MarketPage` 已完成第一版「主線裝備查價」面板，支援以 `ilvl + 裝備部位` 搜尋裝備並直接比較陸行鳥 / 莫古力價格。
 - `MarketPage` 已完成第一版「製作職找價」面板，支援以 `製作職 + 物品等級範圍` 搜尋可製作成果並直接比較雙服價格。
+- OCR 名稱校正已接入本地 `tw-items.msgpack` 索引，匯入預覽與查詢 OCR 會先做 normalize + candidate ranking，再 fallback 到 XIVAPI。
 - 查價結果可直接打開單品市場詳情，並沿用既有工作表匯入流程。
 - 目前仍未拆出獨立 route，也還沒有把製作頁 BOM / 收藏頁材料清單匯入查價流程。
 
 ### 主要檔案
 - `src/pages/MarketPage.tsx` — 主頁面（1215 行），4 Tab 結構
 - `src/tools/marketOcr.ts` — OCR 解析 + 道具名稱提取
+- `src/tools/marketItemSearch.ts` — 本地道具名稱索引、OCR normalize 與候選排序
 - `src/tools/market.ts` — 比價計算、工作表彙總
 - `src/tools/marketFormat.ts` — 格式化工具
 - `src/api/universalis.ts` — 市場 API（單筆 + 批次）
@@ -103,10 +105,10 @@
 
 | Tab | 功能 | 狀態 |
 |-----|------|------|
-| 截圖匯入 | 拖曳/貼上/上傳圖片 → Tesseract.js OCR → 逐列預覽校對 | ✅ |
+| 截圖匯入 | 拖曳/貼上/上傳圖片 → PaddleOCR/Tesseract → 本地道具索引校正 → 逐列預覽校對 | ✅ |
 | 工作表 | 比價清單（陸行鳥/莫古力雙服）、批次操作、彙總統計 | ✅ |
 | 試算 | 市場板稅後利潤計算 | ✅ |
-| 道具查詢 | 截圖 OCR → 名稱清單 → XIVAPI 搜尋 → Universalis 批次查價 + Garland Tools 連結 | ✅ v3.5 |
+| 道具查詢 | 截圖 OCR → 本地道具索引校正 → XIVAPI 搜尋 → Universalis 批次查價 + Garland Tools 連結 | ✅ v3.8 |
 
 ### API 整合
 
