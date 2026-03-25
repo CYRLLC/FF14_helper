@@ -1,4 +1,5 @@
 export type XivapiSheet = 'Item' | 'Recipe' | 'Quest' | 'Action'
+type XivapiLanguage = 'en' | 'chs'
 
 interface XivapiRawResult {
   sheet?: string
@@ -45,6 +46,22 @@ export interface XivapiRecipeDetail {
   ingredients: Array<{ name: string; amount: number }>
 }
 
+export interface XivapiItemSummary {
+  rowId: number
+  name: string
+}
+
+export interface XivapiEquipmentSearchResult {
+  rowId: number
+  name: string
+  itemLevel: number
+  levelEquip: number
+  itemUiCategoryId: number
+  itemUiCategoryName: string
+  classJobCategoryName?: string
+  isUntradable: boolean
+}
+
 const XIVAPI_SEARCH_URL = 'https://v2.xivapi.com/api/search'
 const XIVAPI_SHEET_URL = 'https://v2.xivapi.com/api/sheet'
 
@@ -52,8 +69,8 @@ function sanitizeTerm(term: string): string {
   return term.replace(/"/g, '\\"').trim()
 }
 
-function clampLimit(limit: number): number {
-  return Math.max(1, Math.min(20, Math.round(limit)))
+function clampLimit(limit: number, maximum = 20): number {
+  return Math.max(1, Math.min(maximum, Math.round(limit)))
 }
 
 function getNestedString(value: unknown, path: string[]): string | null {
@@ -95,12 +112,19 @@ function getNestedBoolean(value: unknown, path: string[]): boolean | null {
   return typeof current === 'boolean' ? current : null
 }
 
-function buildSearchParams(sheet: XivapiSheet, field: string, query: string, limit: number, language: 'en' | 'chs' = 'en'): URLSearchParams {
+function buildSearchParams(
+  sheet: XivapiSheet,
+  field: string,
+  query: string,
+  limit: number,
+  language: XivapiLanguage = 'en',
+  maximumLimit = 20,
+): URLSearchParams {
   return new URLSearchParams({
     sheets: sheet,
     fields: field,
     query,
-    limit: clampLimit(limit).toString(),
+    limit: clampLimit(limit, maximumLimit).toString(),
     language,
   })
 }
@@ -116,16 +140,66 @@ export function buildXivapiRecipeSearchUrl(term: string, limit = 8): string {
   return `${XIVAPI_SEARCH_URL}?${params.toString()}`
 }
 
-export function buildXivapiSheetRowUrl(sheet: XivapiSheet, rowId: number, fields: string[]): string {
+export function buildXivapiEquipmentSearchUrl(
+  itemLevel: number,
+  options?: { categoryQuery?: string; limit?: number; language?: XivapiLanguage },
+): string {
+  const fields = [
+    'Name',
+    'LevelItem',
+    'LevelEquip',
+    'ItemUICategory.Name',
+    'ClassJobCategory.Name',
+    'IsUntradable',
+  ]
+  const safeItemLevel = Math.max(1, Math.min(999, Math.round(itemLevel)))
+  const queryParts = [`LevelItem=${safeItemLevel}`, 'LevelEquip>=1']
+  const trimmedCategoryQuery = options?.categoryQuery?.trim()
+  if (trimmedCategoryQuery) {
+    queryParts.push(trimmedCategoryQuery)
+  }
+
+  const params = buildSearchParams(
+    'Item',
+    fields.join(','),
+    queryParts.join(' '),
+    options?.limit ?? 100,
+    options?.language ?? 'en',
+    100,
+  )
+
+  return `${XIVAPI_SEARCH_URL}?${params.toString()}`
+}
+
+export function buildXivapiSheetRowUrl(
+  sheet: XivapiSheet,
+  rowId: number,
+  fields: string[],
+  language: 'en' | 'chs' = 'en',
+): string {
   const params = new URLSearchParams({
-    language: 'en',
+    language,
     fields: fields.join(','),
   })
 
   return `${XIVAPI_SHEET_URL}/${sheet}/${Math.max(0, Math.round(rowId))}?${params.toString()}`
 }
 
-export async function searchXivapi(term: string, sheet: XivapiSheet, limit = 8, language: 'en' | 'chs' = 'en'): Promise<XivapiSearchResult[]> {
+async function fetchSheetRow(
+  sheet: XivapiSheet,
+  rowId: number,
+  fields: string[],
+  language: 'en' | 'chs' = 'en',
+): Promise<XivapiSheetResponse> {
+  const response = await fetch(buildXivapiSheetRowUrl(sheet, rowId, fields, language))
+  if (!response.ok) {
+    throw new Error(`XIVAPI ${sheet} detail request failed with HTTP ${response.status}.`)
+  }
+
+  return (await response.json()) as XivapiSheetResponse
+}
+
+export async function searchXivapi(term: string, sheet: XivapiSheet, limit = 8, language: XivapiLanguage = 'en'): Promise<XivapiSearchResult[]> {
   const trimmedTerm = term.trim()
   if (trimmedTerm.length < 2) {
     return []
@@ -148,6 +222,34 @@ export async function searchXivapi(term: string, sheet: XivapiSheet, limit = 8, 
       rowId: result.row_id,
       name: getNestedString(result.fields, ['Name']) ?? '(Unnamed Row)',
       score: typeof result.score === 'number' ? result.score : 0,
+    }))
+}
+
+export async function searchEquipmentByItemLevel(
+  itemLevel: number,
+  options?: { categoryQuery?: string; limit?: number; language?: XivapiLanguage },
+): Promise<XivapiEquipmentSearchResult[]> {
+  const response = await fetch(buildXivapiEquipmentSearchUrl(itemLevel, options))
+  if (!response.ok) {
+    throw new Error(`XIVAPI equipment search failed with HTTP ${response.status}.`)
+  }
+
+  const payload = (await response.json()) as XivapiSearchResponse
+  const safeItemLevel = Math.max(1, Math.min(999, Math.round(itemLevel)))
+
+  return (payload.results ?? [])
+    .filter((result): result is Required<Pick<XivapiRawResult, 'sheet' | 'row_id'>> & XivapiRawResult => {
+      return typeof result.sheet === 'string' && typeof result.row_id === 'number'
+    })
+    .map((result) => ({
+      rowId: result.row_id,
+      name: getNestedString(result.fields, ['Name']) ?? '(Unnamed Item)',
+      itemLevel: getNestedNumber(result.fields, ['LevelItem', 'value']) ?? safeItemLevel,
+      levelEquip: getNestedNumber(result.fields, ['LevelEquip']) ?? 0,
+      itemUiCategoryId: getNestedNumber(result.fields, ['ItemUICategory', 'row_id']) ?? 0,
+      itemUiCategoryName: getNestedString(result.fields, ['ItemUICategory', 'fields', 'Name']) ?? 'Unknown Category',
+      classJobCategoryName: getNestedString(result.fields, ['ClassJobCategory', 'fields', 'Name']) ?? undefined,
+      isUntradable: getNestedBoolean(result.fields, ['IsUntradable']) ?? false,
     }))
 }
 
@@ -196,12 +298,7 @@ export async function fetchRecipeDetails(rowId: number): Promise<XivapiRecipeDet
     'CanHq',
   ]
 
-  const response = await fetch(buildXivapiSheetRowUrl('Recipe', rowId, fields))
-  if (!response.ok) {
-    throw new Error(`XIVAPI recipe detail request failed with HTTP ${response.status}.`)
-  }
-
-  const payload = (await response.json()) as XivapiSheetResponse
+  const payload = await fetchSheetRow('Recipe', rowId, fields)
   const rawFields = payload.fields ?? {}
   const ingredientRows = Array.isArray(rawFields.Ingredient) ? rawFields.Ingredient : []
   const amountRows = Array.isArray(rawFields.AmountIngredient) ? rawFields.AmountIngredient : []
@@ -227,4 +324,23 @@ export async function fetchRecipeDetails(rowId: number): Promise<XivapiRecipeDet
       }))
       .filter((ingredient) => ingredient.amount > 0),
   }
+}
+
+export async function fetchItemSummary(rowId: number): Promise<XivapiItemSummary> {
+  for (const language of ['chs', 'en'] as const) {
+    try {
+      const payload = await fetchSheetRow('Item', rowId, ['Name'], language)
+      const name = getNestedString(payload.fields, ['Name'])
+      if (name) {
+        return {
+          rowId: typeof payload.row_id === 'number' ? payload.row_id : rowId,
+          name,
+        }
+      }
+    } catch {
+      // Fall back to the next language.
+    }
+  }
+
+  throw new Error(`XIVAPI item detail lookup failed for row ${rowId}.`)
 }

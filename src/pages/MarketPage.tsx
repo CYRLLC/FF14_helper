@@ -1,8 +1,19 @@
-import { startTransition, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react'
 import { pageSources } from '../catalog/sources'
 import SourceAttribution from '../components/SourceAttribution'
-import { fetchItemMarketBatch } from '../api/universalis'
-import { searchXivapi, searchRecipeResults, type XivapiSearchResult } from '../api/xivapi'
+import {
+  fetchItemMarketBatch,
+  fetchMostRecentlyUpdatedItems,
+  fetchUniversalisMarket,
+} from '../api/universalis'
+import {
+  fetchItemSummary,
+  searchEquipmentByItemLevel,
+  searchXivapi,
+  searchRecipeResults,
+  type XivapiEquipmentSearchResult,
+  type XivapiSearchResult,
+} from '../api/xivapi'
 import {
   buildWorkbookSummary,
   calculateMarketboardSummary,
@@ -10,7 +21,7 @@ import {
   sanitizeWorkbookRow,
   type MarketWorkbookRow,
 } from '../tools/market'
-import { formatGil, formatShortDateTime } from '../tools/marketFormat'
+import { formatGil, formatRelativeTime, formatShortDateTime } from '../tools/marketFormat'
 import {
   applyOcrRowsToWorkbook,
   extractNamesFromOcrText,
@@ -18,7 +29,7 @@ import {
   type MarketOcrParsedRow,
   type MarketOcrTargetServer,
 } from '../tools/marketOcr'
-import type { MarketScopeSelection } from '../types'
+import type { MarketScopeSelection, UniversalisMarketSnapshot } from '../types'
 import { getErrorMessage } from '../utils/errors'
 import {
   paddleOcrMarket,
@@ -27,9 +38,11 @@ import {
 } from '../api/paddleOcr'
 
 const STORAGE_KEY = 'ff14-helper.market.workbench.v3'
+const ITEM_HISTORY_KEY = 'ff14-helper.market.item-history.v1'
 
 type MarketTab = 'import' | 'workbook' | 'calculator' | 'query'
 type ImportSource = 'ocr-image' | 'ocr-paste' | 'bulk' | 'manual'
+type MarketQualityFilter = 'all' | 'hq' | 'nq'
 
 interface ActivityEntry {
   id: string
@@ -71,6 +84,7 @@ interface QueryName {
 
 type QueryItemStatus = 'idle' | 'loading' | 'done' | 'not-found' | 'error'
 type RecipeStatus = 'idle' | 'loading' | 'found' | 'none'
+type MsqCategoryFilter = 'all' | 'weapon' | 'head' | 'body' | 'hands' | 'legs' | 'feet' | 'ears' | 'neck' | 'wrists' | 'rings'
 
 interface QueryResult {
   queryId: string
@@ -89,8 +103,117 @@ interface QueryResult {
   recipeLevel?: number
 }
 
+interface ItemHistoryEntry {
+  itemRowId: number
+  itemName: string
+  viewedAt: string
+}
+
+interface MarketDetailSelection {
+  itemRowId: number
+  itemName: string
+}
+
+interface RecentMarketEntry {
+  itemRowId: number
+  itemName: string
+  lastUploadTime: number
+  worldName: string
+}
+
+interface MsqSearchResult {
+  itemRowId: number
+  itemName: string
+  itemLevel: number
+  equipLevel: number
+  slotCategory: Exclude<MsqCategoryFilter, 'all'>
+  slotLabel: string
+  classJobCategoryName?: string
+  chocoboMinPrice?: number
+  moogleMinPrice?: number
+  chocoboAvgPrice?: number
+  moogleAvgPrice?: number
+  notMarketable: boolean
+}
+
 const SCOPE_CHOCOBO: MarketScopeSelection = { region: 'JP', mode: 'world', scopeKey: 'Chocobo' }
 const SCOPE_MOOGLE: MarketScopeSelection = { region: 'EU', mode: 'world', scopeKey: 'Moogle' }
+const MARKET_SCOPE_META: Record<
+  MarketOcrTargetServer,
+  { scope: MarketScopeSelection; recentUpdateDc: string; universalisWorld: string }
+> = {
+  chocobo: {
+    scope: SCOPE_CHOCOBO,
+    recentUpdateDc: 'Mana',
+    universalisWorld: 'Chocobo',
+  },
+  moogle: {
+    scope: SCOPE_MOOGLE,
+    recentUpdateDc: 'Chaos',
+    universalisWorld: 'Moogle',
+  },
+}
+
+const MSQ_CATEGORY_OPTIONS: Array<{ value: MsqCategoryFilter; label: string }> = [
+  { value: 'all', label: '全部裝備' },
+  { value: 'weapon', label: '武器' },
+  { value: 'head', label: '頭部' },
+  { value: 'body', label: '身體' },
+  { value: 'hands', label: '手部' },
+  { value: 'legs', label: '腿部' },
+  { value: 'feet', label: '腳部' },
+  { value: 'ears', label: '耳環' },
+  { value: 'neck', label: '項鍊' },
+  { value: 'wrists', label: '手環' },
+  { value: 'rings', label: '戒指' },
+]
+
+const MSQ_SLOT_ORDER: Record<Exclude<MsqCategoryFilter, 'all'>, number> = {
+  weapon: 0,
+  head: 1,
+  body: 2,
+  hands: 3,
+  legs: 4,
+  feet: 5,
+  ears: 6,
+  neck: 7,
+  wrists: 8,
+  rings: 9,
+}
+
+const MSQ_COMBAT_JOB_TAGS = new Set([
+  'GLA',
+  'PGL',
+  'MRD',
+  'LNC',
+  'ARC',
+  'CNJ',
+  'THM',
+  'ACN',
+  'ROG',
+  'PLD',
+  'MNK',
+  'WAR',
+  'DRG',
+  'BRD',
+  'WHM',
+  'BLM',
+  'SMN',
+  'SCH',
+  'NIN',
+  'MCH',
+  'DRK',
+  'AST',
+  'SAM',
+  'RDM',
+  'BLU',
+  'GNB',
+  'DNC',
+  'RPR',
+  'SGE',
+  'VPR',
+  'PCT',
+])
 
 const TABS: Array<{ id: MarketTab; label: string }> = [
   { id: 'import', label: '截圖匯入' },
@@ -250,8 +373,89 @@ function filterLabel(filter: 'all' | 'different' | 'chocobo' | 'moogle'): string
   }
 }
 
+function qualityFilterLabel(filter: MarketQualityFilter): string {
+  switch (filter) {
+    case 'hq': return '只看 HQ'
+    case 'nq': return '只看 NQ'
+    default: return 'HQ / NQ 全部'
+  }
+}
+
 function buildLogEntry(message: string): ActivityEntry {
   return { id: createId('log'), createdAt: new Date().toISOString(), message }
+}
+
+function qualityMatchesFilter(hq: boolean, filter: MarketQualityFilter): boolean {
+  switch (filter) {
+    case 'hq': return hq
+    case 'nq': return !hq
+    default: return true
+  }
+}
+
+function msqSlotLabel(slot: Exclude<MsqCategoryFilter, 'all'>): string {
+  switch (slot) {
+    case 'weapon': return '武器'
+    case 'head': return '頭部'
+    case 'body': return '身體'
+    case 'hands': return '手部'
+    case 'legs': return '腿部'
+    case 'feet': return '腳部'
+    case 'ears': return '耳環'
+    case 'neck': return '項鍊'
+    case 'wrists': return '手環'
+    case 'rings': return '戒指'
+  }
+}
+
+function resolveMsqSlotCategory(itemUiCategoryName: string): Exclude<MsqCategoryFilter, 'all'> | null {
+  const normalized = itemUiCategoryName.trim().toLowerCase()
+
+  if (normalized.includes('arm')) return 'weapon'
+  if (normalized === 'head') return 'head'
+  if (normalized === 'body') return 'body'
+  if (normalized === 'hands') return 'hands'
+  if (normalized === 'legs') return 'legs'
+  if (normalized === 'feet') return 'feet'
+  if (normalized === 'earrings') return 'ears'
+  if (normalized === 'necklace') return 'neck'
+  if (normalized === 'bracelets') return 'wrists'
+  if (normalized === 'ring') return 'rings'
+
+  return null
+}
+
+function isCombatOrUniversalClassJob(classJobCategoryName?: string): boolean {
+  if (!classJobCategoryName) return false
+  if (classJobCategoryName === 'All Classes') return true
+
+  return classJobCategoryName
+    .split(/\s+/)
+    .filter(Boolean)
+    .some((token) => MSQ_COMBAT_JOB_TAGS.has(token))
+}
+
+function matchesMsqCategoryFilter(result: XivapiEquipmentSearchResult, category: MsqCategoryFilter): boolean {
+  const slotCategory = resolveMsqSlotCategory(result.itemUiCategoryName)
+  if (!slotCategory) return false
+  if (!isCombatOrUniversalClassJob(result.classJobCategoryName)) return false
+  return category === 'all' ? true : slotCategory === category
+}
+
+function buildMsqCategoryQuery(category: MsqCategoryFilter): string | undefined {
+  switch (category) {
+    case 'weapon': return 'ItemUICategory.Name~"Arm"'
+    case 'head': return 'ItemUICategory=34'
+    case 'body': return 'ItemUICategory=35'
+    case 'hands': return 'ItemUICategory=37'
+    case 'legs': return 'ItemUICategory=36'
+    case 'feet': return 'ItemUICategory=38'
+    case 'ears': return 'ItemUICategory=41'
+    case 'neck': return 'ItemUICategory=40'
+    case 'wrists': return 'ItemUICategory=42'
+    case 'rings': return 'ItemUICategory=43'
+    default: return undefined
+  }
 }
 
 function parseBulkRows(value: string): MarketOcrParsedRow[] {
@@ -310,6 +514,28 @@ function loadSavedState(): SavedState {
   }
 }
 
+function loadItemHistory(): ItemHistoryEntry[] {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const raw = window.localStorage.getItem(ITEM_HISTORY_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as Array<Partial<ItemHistoryEntry>>
+    if (!Array.isArray(parsed)) return []
+
+    return parsed
+      .map((entry) => ({
+        itemRowId: Number(entry.itemRowId ?? 0),
+        itemName: typeof entry.itemName === 'string' ? entry.itemName.trim() : '',
+        viewedAt: typeof entry.viewedAt === 'string' ? entry.viewedAt : new Date().toISOString(),
+      }))
+      .filter((entry) => entry.itemRowId > 0 && entry.itemName.length > 0)
+      .slice(0, 8)
+  } catch {
+    return []
+  }
+}
+
 // ── Component ─────────────────────────────────────────────────
 
 function MarketPage() {
@@ -352,7 +578,26 @@ function MarketPage() {
   const [queryPreviewUrl, setQueryPreviewUrl] = useState<string | null>(null)
   const [queryDropActive, setQueryDropActive] = useState(false)
   const [queryManualInput, setQueryManualInput] = useState('')
+  const [msqItemLevelInput, setMsqItemLevelInput] = useState('')
+  const [msqCategoryFilter, setMsqCategoryFilter] = useState<MsqCategoryFilter>('all')
+  const [msqResults, setMsqResults] = useState<MsqSearchResult[]>([])
+  const [msqBusy, setMsqBusy] = useState(false)
+  const [msqError, setMsqError] = useState<string | null>(null)
+  const [detailTargetServer, setDetailTargetServer] = useState<MarketOcrTargetServer>('chocobo')
+  const [detailSelection, setDetailSelection] = useState<MarketDetailSelection | null>(null)
+  const [detailSnapshot, setDetailSnapshot] = useState<UniversalisMarketSnapshot | null>(null)
+  const [detailBusy, setDetailBusy] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [detailQualityFilter, setDetailQualityFilter] = useState<MarketQualityFilter>('all')
+  const [recentMarketEntries, setRecentMarketEntries] = useState<RecentMarketEntry[]>([])
+  const [recentMarketBusy, setRecentMarketBusy] = useState(false)
+  const [recentMarketError, setRecentMarketError] = useState<string | null>(null)
+  const [itemHistory, setItemHistory] = useState<ItemHistoryEntry[]>(() => loadItemHistory())
   const queryDropRef = useRef<HTMLDivElement>(null)
+  const detailSectionRef = useRef<HTMLElement | null>(null)
+  const detailCacheRef = useRef<Map<string, UniversalisMarketSnapshot>>(new Map())
+  const recentUpdatesCacheRef = useRef<Map<MarketOcrTargetServer, RecentMarketEntry[]>>(new Map())
+  const itemNameCacheRef = useRef<Map<number, string>>(new Map())
 
   // ── Persistence ──────────────────────────────────────────────
 
@@ -374,6 +619,10 @@ function MarketPage() {
       if (queryPreviewUrl) URL.revokeObjectURL(queryPreviewUrl)
     }
   }, [queryPreviewUrl])
+
+  useEffect(() => {
+    window.localStorage.setItem(ITEM_HISTORY_KEY, JSON.stringify(itemHistory))
+  }, [itemHistory])
 
   // ── Memos ────────────────────────────────────────────────────
 
@@ -399,8 +648,52 @@ function MarketPage() {
       }
     })
   }, [rows, searchQuery, tableFilter])
+  const detailListings = useMemo(() => {
+    return (detailSnapshot?.listings ?? []).filter((listing) => qualityMatchesFilter(listing.hq, detailQualityFilter))
+  }, [detailQualityFilter, detailSnapshot])
+  const detailSales = useMemo(() => {
+    return (detailSnapshot?.recentHistory ?? []).filter((sale) => qualityMatchesFilter(sale.hq, detailQualityFilter))
+  }, [detailQualityFilter, detailSnapshot])
+  const sortedDetailListings = useMemo(
+    () => [...detailListings].sort((left, right) => left.pricePerUnit - right.pricePerUnit),
+    [detailListings],
+  )
+  const sortedDetailSales = useMemo(
+    () => [...detailSales].sort((left, right) => right.timestamp - left.timestamp),
+    [detailSales],
+  )
+  const detailLatestReviewTime = useMemo(
+    () => sortedDetailListings.reduce((latest, listing) => Math.max(latest, listing.lastReviewTime ?? 0), 0),
+    [sortedDetailListings],
+  )
+  const detailSummary = useMemo(() => {
+    const lowestPrice = detailListings.length > 0
+      ? Math.min(...detailListings.map((listing) => listing.pricePerUnit))
+      : detailQualityFilter === 'hq'
+        ? detailSnapshot?.averagePriceHq
+        : detailQualityFilter === 'nq'
+          ? detailSnapshot?.averagePriceNq
+          : detailSnapshot?.lowestPrice
+    const averagePrice = detailQualityFilter === 'hq'
+      ? detailSnapshot?.averagePriceHq
+      : detailQualityFilter === 'nq'
+        ? detailSnapshot?.averagePriceNq
+        : detailSnapshot?.averagePrice
+    const recentPurchasePrice = detailSales.length > 0 ? detailSales[0].pricePerUnit : undefined
+    const recentPurchaseAt = detailSales.length > 0 ? detailSales[0].timestamp : undefined
+
+    return {
+      lowestPrice,
+      averagePrice,
+      recentPurchasePrice,
+      recentPurchaseAt,
+    }
+  }, [detailListings, detailQualityFilter, detailSales, detailSnapshot])
 
   // ── Import handlers ──────────────────────────────────────────
+
+  const msqItemLevelValue = Number(msqItemLevelInput)
+  const msqItemLevelValid = Number.isInteger(msqItemLevelValue) && msqItemLevelValue >= 1 && msqItemLevelValue <= 999
 
   function pushActivity(messageText: string): void {
     const nextEntry = buildLogEntry(messageText)
@@ -657,6 +950,130 @@ function MarketPage() {
     setQueryManualInput('')
   }
 
+  function rememberViewedItem(itemRowId: number, itemName: string): void {
+    const nextEntry: ItemHistoryEntry = {
+      itemRowId,
+      itemName,
+      viewedAt: new Date().toISOString(),
+    }
+    setItemHistory((current) => [nextEntry, ...current.filter((entry) => entry.itemRowId !== itemRowId)].slice(0, 8))
+  }
+
+  function openMarketDetail(itemRowId: number, itemName: string, targetServer: MarketOcrTargetServer): void {
+    setDetailSelection({ itemRowId, itemName })
+    setDetailTargetServer(targetServer)
+    setDetailQualityFilter('all')
+    rememberViewedItem(itemRowId, itemName)
+    window.requestAnimationFrame(() => {
+      detailSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
+
+  const refreshRecentMarketEntries = useCallback(async (forceRefresh = false): Promise<void> => {
+    if (!forceRefresh) {
+      const cached = recentUpdatesCacheRef.current.get(detailTargetServer)
+      if (cached) {
+        setRecentMarketEntries(cached)
+        setRecentMarketError(null)
+        return
+      }
+    }
+
+    setRecentMarketBusy(true)
+    setRecentMarketError(null)
+
+    try {
+      const rawEntries = await fetchMostRecentlyUpdatedItems(MARKET_SCOPE_META[detailTargetServer].recentUpdateDc, 10)
+      const uniqueEntries = rawEntries.filter(
+        (entry, index, array) => array.findIndex((candidate) => candidate.itemId === entry.itemId) === index,
+      ).slice(0, 8)
+
+      const enrichedEntries = await Promise.all(
+        uniqueEntries.map(async (entry): Promise<RecentMarketEntry> => {
+          const cachedName = itemNameCacheRef.current.get(entry.itemId)
+          if (cachedName) {
+            return {
+              itemRowId: entry.itemId,
+              itemName: cachedName,
+              lastUploadTime: entry.lastUploadTime,
+              worldName: entry.worldName,
+            }
+          }
+
+          try {
+            const itemSummary = await fetchItemSummary(entry.itemId)
+            itemNameCacheRef.current.set(entry.itemId, itemSummary.name)
+            return {
+              itemRowId: entry.itemId,
+              itemName: itemSummary.name,
+              lastUploadTime: entry.lastUploadTime,
+              worldName: entry.worldName,
+            }
+          } catch {
+            const fallbackName = `道具 #${entry.itemId}`
+            itemNameCacheRef.current.set(entry.itemId, fallbackName)
+            return {
+              itemRowId: entry.itemId,
+              itemName: fallbackName,
+              lastUploadTime: entry.lastUploadTime,
+              worldName: entry.worldName,
+            }
+          }
+        }),
+      )
+
+      recentUpdatesCacheRef.current.set(detailTargetServer, enrichedEntries)
+      setRecentMarketEntries(enrichedEntries)
+    } catch (error) {
+      setRecentMarketEntries([])
+      setRecentMarketError(getErrorMessage(error))
+    } finally {
+      setRecentMarketBusy(false)
+    }
+  }, [detailTargetServer])
+
+  useEffect(() => {
+    if (activeTab !== 'query') return
+    void refreshRecentMarketEntries()
+  }, [activeTab, refreshRecentMarketEntries])
+
+  useEffect(() => {
+    if (activeTab !== 'query' || !detailSelection) return
+
+    const cacheKey = `${detailTargetServer}:${detailSelection.itemRowId}`
+    const cachedSnapshot = detailCacheRef.current.get(cacheKey)
+    if (cachedSnapshot) {
+      setDetailSnapshot(cachedSnapshot)
+      setDetailError(null)
+      setDetailBusy(false)
+      return
+    }
+
+    let cancelled = false
+    setDetailBusy(true)
+    setDetailError(null)
+    setDetailSnapshot(null)
+
+    fetchUniversalisMarket(MARKET_SCOPE_META[detailTargetServer].scope, detailSelection.itemRowId)
+      .then((snapshot) => {
+        if (cancelled) return
+        detailCacheRef.current.set(cacheKey, snapshot)
+        setDetailSnapshot(snapshot)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setDetailError(getErrorMessage(error))
+        setDetailSnapshot(null)
+      })
+      .finally(() => {
+        if (!cancelled) setDetailBusy(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, detailSelection, detailTargetServer])
+
   async function runQueryAll(): Promise<void> {
     if (queryNames.length === 0) return
     setQueryBusy(true)
@@ -688,8 +1105,7 @@ function MarketPage() {
       ])
 
       // 4. Build result objects
-      setQueryResults(
-        queryNames.map((qn): QueryResult => {
+      const nextResults = queryNames.map((qn): QueryResult => {
           const lookup = xivapiLookups.find((x) => x.id === qn.id)
           if (!lookup?.item) {
             return { queryId: qn.id, inputName: qn.name, status: 'not-found', recipeStatus: 'idle' }
@@ -711,13 +1127,117 @@ function MarketPage() {
             notMarketable,
             recipeStatus: 'idle',
           }
-        }),
-      )
+        })
+      setQueryResults(nextResults)
+
+      const firstFound = nextResults.find((result) => result.status === 'done' && result.itemRowId != null && result.confirmedName)
+      if (firstFound?.itemRowId && firstFound.confirmedName) {
+        openMarketDetail(firstFound.itemRowId, firstFound.confirmedName, detailTargetServer)
+      }
     } catch (error) {
       setMessage(`查詢失敗：${getErrorMessage(error)}`)
       setQueryResults((current) => current.map((r) => ({ ...r, status: 'error', error: getErrorMessage(error) })))
     } finally {
       setQueryBusy(false)
+    }
+  }
+
+  async function runMsqSearch(): Promise<void> {
+    const itemLevel = Number(msqItemLevelInput)
+    if (!Number.isInteger(itemLevel) || itemLevel < 1 || itemLevel > 999) {
+      setMsqError('請輸入 1 到 999 的裝備品級。')
+      setMsqResults([])
+      return
+    }
+
+    setMsqBusy(true)
+    setMsqError(null)
+    setMsqResults([])
+
+    try {
+      const equipmentResults = (await searchEquipmentByItemLevel(itemLevel, {
+        categoryQuery: buildMsqCategoryQuery(msqCategoryFilter),
+        limit: 100,
+        language: 'en',
+      }))
+        .filter((result) => matchesMsqCategoryFilter(result, msqCategoryFilter))
+        .filter((result, index, array) => array.findIndex((candidate) => candidate.rowId === result.rowId) === index)
+        .sort((left, right) => {
+          const leftSlot = resolveMsqSlotCategory(left.itemUiCategoryName)
+          const rightSlot = resolveMsqSlotCategory(right.itemUiCategoryName)
+          const leftOrder = leftSlot ? MSQ_SLOT_ORDER[leftSlot] : 999
+          const rightOrder = rightSlot ? MSQ_SLOT_ORDER[rightSlot] : 999
+
+          if (leftOrder !== rightOrder) return leftOrder - rightOrder
+          if (left.levelEquip !== right.levelEquip) return left.levelEquip - right.levelEquip
+          return left.name.localeCompare(right.name)
+        })
+
+      if (equipmentResults.length === 0) {
+        setMsqError('找不到符合條件的主線裝備。')
+        return
+      }
+
+      const itemIds = equipmentResults.map((item) => item.rowId)
+      const [chocoboData, moogleData, localizedNames] = await Promise.all([
+        fetchItemMarketBatch(SCOPE_CHOCOBO, itemIds),
+        fetchItemMarketBatch(SCOPE_MOOGLE, itemIds),
+        Promise.all(
+          equipmentResults.map(async (item) => {
+            const cachedName = itemNameCacheRef.current.get(item.rowId)
+            if (cachedName) {
+              return [item.rowId, cachedName] as const
+            }
+
+            try {
+              const summary = await fetchItemSummary(item.rowId)
+              itemNameCacheRef.current.set(item.rowId, summary.name)
+              return [item.rowId, summary.name] as const
+            } catch {
+              return [item.rowId, item.name] as const
+            }
+          }),
+        ),
+      ])
+
+      const localizedNameMap = new Map<number, string>(localizedNames)
+      const nextResults = equipmentResults
+        .map((item): MsqSearchResult | null => {
+          const slotCategory = resolveMsqSlotCategory(item.itemUiCategoryName)
+          if (!slotCategory) return null
+
+          const rowId = item.rowId
+          const chocoboSnapshot = chocoboData.snapshots.get(rowId)
+          const moogleSnapshot = moogleData.snapshots.get(rowId)
+
+          return {
+            itemRowId: rowId,
+            itemName: localizedNameMap.get(rowId) ?? item.name,
+            itemLevel: item.itemLevel,
+            equipLevel: item.levelEquip,
+            slotCategory,
+            slotLabel: msqSlotLabel(slotCategory),
+            classJobCategoryName: item.classJobCategoryName,
+            chocoboMinPrice: chocoboSnapshot?.lowestPrice,
+            moogleMinPrice: moogleSnapshot?.lowestPrice,
+            chocoboAvgPrice: chocoboSnapshot?.averagePrice,
+            moogleAvgPrice: moogleSnapshot?.averagePrice,
+            notMarketable: item.isUntradable || (chocoboData.unresolved.has(rowId) && moogleData.unresolved.has(rowId)),
+          }
+        })
+        .filter((result): result is MsqSearchResult => result !== null)
+
+      setMsqResults(nextResults)
+
+      const firstResult = nextResults[0]
+      if (firstResult) {
+        openMarketDetail(firstResult.itemRowId, firstResult.itemName, detailTargetServer)
+      }
+    } catch (error) {
+      setMsqError(getErrorMessage(error))
+      setMsqResults([])
+    } finally {
+      setMsqBusy(false)
     }
   }
 
@@ -751,6 +1271,56 @@ function MarketPage() {
         current.map((r) => (r.queryId === queryId ? { ...r, recipeStatus: 'none' } : r)),
       )
     }
+  }
+
+  function addDetailToWorkbook(): void {
+    if (!detailSelection) return
+
+    const queryResultMatch = queryResults.find((result) => result.itemRowId === detailSelection.itemRowId)
+    const msqResultMatch = msqResults.find((result) => result.itemRowId === detailSelection.itemRowId)
+    const derivedChocoboPrice =
+      queryResultMatch?.chocoboMinPrice
+      ?? msqResultMatch?.chocoboMinPrice
+      ?? (detailTargetServer === 'chocobo' ? detailSummary.lowestPrice ?? 0 : 0)
+    const derivedMooglePrice =
+      queryResultMatch?.moogleMinPrice
+      ?? msqResultMatch?.moogleMinPrice
+      ?? (detailTargetServer === 'moogle' ? detailSummary.lowestPrice ?? 0 : 0)
+
+    const normalizedName = detailSelection.itemName.trim()
+    const nextRow = sanitizeWorkbookRow({
+      id: createId('row'),
+      itemName: normalizedName,
+      chocoboPrice: derivedChocoboPrice,
+      mooglePrice: derivedMooglePrice,
+      quantity: 1,
+      note: '',
+    })
+
+    setRows((current) => {
+      const existingIndex = current.findIndex((row) => row.itemName.trim() === normalizedName)
+      if (existingIndex === -1) {
+        return [...current, nextRow]
+      }
+
+      return current.map((row, index) =>
+        index === existingIndex
+          ? sanitizeWorkbookRow({
+              ...row,
+              chocoboPrice: nextRow.chocoboPrice || row.chocoboPrice,
+              mooglePrice: nextRow.mooglePrice || row.mooglePrice,
+            })
+          : row,
+      )
+    })
+
+    setLatestImport({
+      source: 'manual',
+      importedAt: new Date().toISOString(),
+      rowCount: 1,
+      targetServer: detailTargetServer,
+    })
+    pushActivity(`已將 ${normalizedName} 的市場資料帶入工作表。`)
   }
 
   // ── Render helpers ────────────────────────────────────────────
@@ -1331,6 +1901,40 @@ function MarketPage() {
                   {queryBusy ? '查詢中⋯' : `查詢全部 ${queryNames.length} 個道具`}
                 </button>
               </div>
+
+              <div className="section-heading" style={{ marginTop: '0.8rem' }}>
+                <h2>最近查看</h2>
+                <p>保留最近打開過的單品市場詳情，方便快速回看。</p>
+              </div>
+              {itemHistory.length === 0 ? (
+                <div className="empty-state">
+                  <strong>尚無查看紀錄</strong>
+                  <p>點開任一道具詳情後，這裡會保留最近 8 筆。</p>
+                </div>
+              ) : (
+                <div className="history-list">
+                  {itemHistory.map((entry) => (
+                    <article key={`${entry.itemRowId}-${entry.viewedAt}`} className="history-item">
+                      <div className="history-item__top">
+                        <strong>{entry.itemName}</strong>
+                        <span className="badge">{formatRelativeTime(entry.viewedAt)}</span>
+                      </div>
+                      <div className="detail-list">
+                        <div><strong>查看時間：</strong>{formatShortDateTime(entry.viewedAt)}</div>
+                      </div>
+                      <div className="button-row">
+                        <button
+                          className="button button--ghost"
+                          onClick={() => openMarketDetail(entry.itemRowId, entry.itemName, detailTargetServer)}
+                          type="button"
+                        >
+                          重新打開詳情
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
             </article>
 
             {/* Right: results */}
@@ -1339,7 +1943,8 @@ function MarketPage() {
                 <h2>查詢結果</h2>
                 <p>
                   市價由 Universalis 即時查詢（陸行鳥 / 莫古力）。
-                  「取得方式」點擊 Garland Tools 連結查看完整資料，「查配方」確認是否可製作。
+                  「查看詳情」會進一步載入單品掛單、近期交易與資料新鮮度；
+                  「取得方式」可用 Garland Tools 連結查看。
                 </p>
               </div>
               {queryResults.length === 0 ? (
@@ -1416,6 +2021,20 @@ function MarketPage() {
                             )}
                             {result.itemRowId != null && (
                               <>
+                                <button
+                                  className="button button--ghost"
+                                  onClick={() => openMarketDetail(result.itemRowId!, result.confirmedName ?? result.inputName, 'chocobo')}
+                                  type="button"
+                                >
+                                  查看陸行鳥詳情
+                                </button>
+                                <button
+                                  className="button button--ghost"
+                                  onClick={() => openMarketDetail(result.itemRowId!, result.confirmedName ?? result.inputName, 'moogle')}
+                                  type="button"
+                                >
+                                  查看莫古力詳情
+                                </button>
                                 <a
                                   className="button button--ghost"
                                   href={garlandLink(result.itemRowId)}
@@ -1426,11 +2045,11 @@ function MarketPage() {
                                 </a>
                                 <a
                                   className="button button--ghost"
-                                  href={universalisLink(result.itemRowId, 'Chocobo')}
+                                  href={universalisLink(result.itemRowId, MARKET_SCOPE_META[detailTargetServer].universalisWorld)}
                                   rel="noreferrer"
                                   target="_blank"
                                 >
-                                  Universalis
+                                  Universalis（目前伺服器）
                                 </a>
                               </>
                             )}
@@ -1439,6 +2058,352 @@ function MarketPage() {
                       </article>
                     )
                   })}
+                </div>
+              )}
+            </article>
+
+            <article className="page-card" style={{ gridColumn: '1 / -1' }}>
+              <div className="section-heading">
+                <h2>主線裝備查價</h2>
+                <p>
+                  參考 FFXIV Market 的 MSQ price checker，依裝備品級與部位抓出可用裝備，
+                  再同步比較陸行鳥與莫古力的市場價格。
+                </p>
+              </div>
+
+              <div className="field-grid">
+                <label className="field">
+                  <span className="field-label">裝備品級（ilvl）</span>
+                  <input
+                    className="input-text"
+                    inputMode="numeric"
+                    max={999}
+                    min={1}
+                    onChange={(event) => setMsqItemLevelInput(event.target.value)}
+                    placeholder="例如 120"
+                    type="number"
+                    value={msqItemLevelInput}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">裝備部位</span>
+                  <select
+                    className="input-select"
+                    onChange={(event) => setMsqCategoryFilter(event.target.value as MsqCategoryFilter)}
+                    value={msqCategoryFilter}
+                  >
+                    {MSQ_CATEGORY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="button-row">
+                <button
+                  className="button button--primary"
+                  disabled={msqBusy || !msqItemLevelValid}
+                  onClick={() => void runMsqSearch()}
+                  type="button"
+                >
+                  {msqBusy ? '查詢中⋯' : '查主線裝備'}
+                </button>
+              </div>
+
+              {msqError ? (
+                <div className="callout">
+                  <span className="callout-title">查詢狀態</span>
+                  <span className="callout-body">{msqError}</span>
+                </div>
+              ) : null}
+
+              {msqResults.length === 0 ? (
+                <div className="empty-state">
+                  <strong>尚未執行主線裝備查價</strong>
+                  <p>輸入裝備品級後，可快速檢查該等級的武器、防具與飾品市場價格。</p>
+                </div>
+              ) : (
+                <div className="history-list">
+                  {msqResults.map((result) => {
+                    const cheaper = cheaperServer(result.chocoboMinPrice, result.moogleMinPrice)
+                    return (
+                      <article key={`${result.itemRowId}-${result.slotCategory}`} className="history-item">
+                        <div className="history-item__top">
+                          <strong>{result.itemName}</strong>
+                          <span className="badge">{result.slotLabel}</span>
+                          <span className="badge">裝備等級 {result.equipLevel}</span>
+                          <span className="badge">物品等級 {result.itemLevel}</span>
+                          {result.notMarketable && <span className="badge">不可交易</span>}
+                          {!result.notMarketable && cheaper && (
+                            <span className="badge badge--positive">較便宜：{cheaper}</span>
+                          )}
+                        </div>
+
+                        <div className="detail-list">
+                          {result.classJobCategoryName ? <div><strong>職業：</strong>{result.classJobCategoryName}</div> : null}
+                          {result.chocoboMinPrice != null
+                            ? <div><strong>陸行鳥最低：</strong>{formatGil(result.chocoboMinPrice)}</div>
+                            : <div><strong>陸行鳥最低：</strong>暫無資料</div>}
+                          {result.moogleMinPrice != null
+                            ? <div><strong>莫古力最低：</strong>{formatGil(result.moogleMinPrice)}</div>
+                            : <div><strong>莫古力最低：</strong>暫無資料</div>}
+                          {result.chocoboAvgPrice != null ? <div><strong>陸行鳥平均：</strong>{formatGil(result.chocoboAvgPrice)}</div> : null}
+                          {result.moogleAvgPrice != null ? <div><strong>莫古力平均：</strong>{formatGil(result.moogleAvgPrice)}</div> : null}
+                        </div>
+
+                        <div className="button-row">
+                          <button
+                            className="button button--ghost"
+                            onClick={() => openMarketDetail(result.itemRowId, result.itemName, 'chocobo')}
+                            type="button"
+                          >
+                            查看陸行鳥詳情
+                          </button>
+                          <button
+                            className="button button--ghost"
+                            onClick={() => openMarketDetail(result.itemRowId, result.itemName, 'moogle')}
+                            type="button"
+                          >
+                            查看莫古力詳情
+                          </button>
+                          <a
+                            className="button button--ghost"
+                            href={garlandLink(result.itemRowId)}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            Garland Tools
+                          </a>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+            </article>
+
+            <article className="page-card" ref={detailSectionRef} style={{ gridColumn: '1 / -1' }}>
+              <div className="section-heading">
+                <h2>單品市場詳情</h2>
+                <p>
+                  這裡顯示單一道具在 {serverLabel(detailTargetServer)} 的市場摘要、掛單與近期交易。
+                  目前支援 HQ / NQ 篩選與一鍵帶入工作表。
+                </p>
+              </div>
+
+              {detailSelection ? (
+                <>
+                  <div className="badge-row">
+                    <span className="badge badge--positive">目前道具：{detailSelection.itemName}</span>
+                    <span className="badge">伺服器：{serverLabel(detailTargetServer)}</span>
+                    <span className="badge">品質：{qualityFilterLabel(detailQualityFilter)}</span>
+                    {detailSnapshot ? <span className="badge">查詢時間：{formatRelativeTime(detailSnapshot.fetchedAt)}</span> : null}
+                    {detailLatestReviewTime > 0 ? <span className="badge">最新檢視：{formatRelativeTime(detailLatestReviewTime)}</span> : null}
+                  </div>
+
+                  <div className="field-grid">
+                    <label className="field">
+                      <span className="field-label">市場伺服器</span>
+                      <select
+                        className="input-select"
+                        onChange={(event) => setDetailTargetServer(event.target.value as MarketOcrTargetServer)}
+                        value={detailTargetServer}
+                      >
+                        <option value="chocobo">陸行鳥</option>
+                        <option value="moogle">莫古力</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span className="field-label">品質篩選</span>
+                      <select
+                        className="input-select"
+                        onChange={(event) => setDetailQualityFilter(event.target.value as MarketQualityFilter)}
+                        value={detailQualityFilter}
+                      >
+                        <option value="all">HQ / NQ 全部</option>
+                        <option value="hq">只看 HQ</option>
+                        <option value="nq">只看 NQ</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="button-row">
+                    <button className="button button--primary" onClick={addDetailToWorkbook} type="button">帶入工作表</button>
+                    <a
+                      className="button button--ghost"
+                      href={garlandLink(detailSelection.itemRowId)}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Garland Tools
+                    </a>
+                    <a
+                      className="button button--ghost"
+                      href={universalisLink(detailSelection.itemRowId, MARKET_SCOPE_META[detailTargetServer].universalisWorld)}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Universalis
+                    </a>
+                  </div>
+
+                  {detailBusy ? (
+                    <div className="callout">
+                      <span className="callout-title">市場資料載入中</span>
+                      <span className="callout-body">正在向 Universalis 取得掛單與交易歷史。</span>
+                    </div>
+                  ) : detailError ? (
+                    <div className="callout callout--error">
+                      <span className="callout-title">查詢失敗</span>
+                      <span className="callout-body">{detailError}</span>
+                    </div>
+                  ) : detailSnapshot ? (
+                    <div className="page-grid">
+                      <div className="stats-grid">
+                        <article className="stat-card"><div className="stat-label">最低價格</div><div className="stat-value">{formatGil(detailSummary.lowestPrice)}</div></article>
+                        <article className="stat-card"><div className="stat-label">平均價格</div><div className="stat-value">{formatGil(detailSummary.averagePrice)}</div></article>
+                        <article className="stat-card"><div className="stat-label">最近成交</div><div className="stat-value">{formatGil(detailSummary.recentPurchasePrice)}</div></article>
+                        <article className="stat-card"><div className="stat-label">成交時間</div><div className="stat-value">{detailSummary.recentPurchaseAt ? formatRelativeTime(detailSummary.recentPurchaseAt) : '無資料'}</div></article>
+                        <article className="stat-card"><div className="stat-label">流通速度</div><div className="stat-value">{detailSnapshot.regularSaleVelocity != null ? `${detailSnapshot.regularSaleVelocity.toFixed(1)} / day` : '無資料'}</div></article>
+                        <article className="stat-card"><div className="stat-label">掛單 / 歷史</div><div className="stat-value">{sortedDetailListings.length} / {sortedDetailSales.length}</div></article>
+                      </div>
+
+                      <section className="page-card">
+                        <div className="section-heading">
+                          <h2>目前掛單</h2>
+                          <p>依單價由低到高排序，支援 HQ / NQ 篩選。</p>
+                        </div>
+                        {sortedDetailListings.length === 0 ? (
+                          <div className="empty-state">
+                            <strong>目前沒有符合條件的掛單</strong>
+                            <p>可能是該道具沒有上架，或目前品質篩選沒有資料。</p>
+                          </div>
+                        ) : (
+                          <div className="table-wrap">
+                            <table className="data-table">
+                              <thead>
+                                <tr><th>單價</th><th>數量</th><th>總價</th><th>品質</th><th>世界</th><th>檢視時間</th></tr>
+                              </thead>
+                              <tbody>
+                                {sortedDetailListings.map((listing, index) => (
+                                  <tr key={`${listing.worldName}-${listing.pricePerUnit}-${listing.quantity}-${index}`}>
+                                    <td>{formatGil(listing.pricePerUnit)}</td>
+                                    <td>{listing.quantity}</td>
+                                    <td>{formatGil(listing.total)}</td>
+                                    <td>{listing.hq ? 'HQ' : 'NQ'}</td>
+                                    <td>{listing.worldName}</td>
+                                    <td>{listing.lastReviewTime ? formatRelativeTime(listing.lastReviewTime) : '無資料'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </section>
+
+                      <section className="page-card">
+                        <div className="section-heading">
+                          <h2>近期交易</h2>
+                          <p>依成交時間由新到舊排序，可快速確認最近是否有人買。</p>
+                        </div>
+                        {sortedDetailSales.length === 0 ? (
+                          <div className="empty-state">
+                            <strong>目前沒有符合條件的交易紀錄</strong>
+                            <p>這代表近期沒有成交，或目前品質篩選沒有資料。</p>
+                          </div>
+                        ) : (
+                          <div className="table-wrap">
+                            <table className="data-table">
+                              <thead>
+                                <tr><th>單價</th><th>數量</th><th>品質</th><th>世界</th><th>成交時間</th></tr>
+                              </thead>
+                              <tbody>
+                                {sortedDetailSales.map((sale, index) => (
+                                  <tr key={`${sale.worldName}-${sale.timestamp}-${sale.pricePerUnit}-${index}`}>
+                                    <td>{formatGil(sale.pricePerUnit)}</td>
+                                    <td>{sale.quantity}</td>
+                                    <td>{sale.hq ? 'HQ' : 'NQ'}</td>
+                                    <td>{sale.worldName}</td>
+                                    <td>{formatShortDateTime(sale.timestamp)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </section>
+                    </div>
+                  ) : (
+                    <div className="empty-state">
+                      <strong>尚未載入市場資料</strong>
+                      <p>請先從上方查詢結果或最近更新清單開啟道具詳情。</p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="empty-state">
+                  <strong>尚未選擇單一道具</strong>
+                  <p>請先從上方查詢結果點「查看詳情」。</p>
+                </div>
+              )}
+            </article>
+
+            <article className="page-card" style={{ gridColumn: '1 / -1' }}>
+              <div className="section-heading">
+                <h2>最近更新的物品</h2>
+                <p>
+                  這裡顯示與 {serverLabel(detailTargetServer)} 對應資料中心
+                  （{MARKET_SCOPE_META[detailTargetServer].recentUpdateDc}）最近上傳的市場物品。
+                </p>
+              </div>
+              <div className="button-row">
+                <button
+                  className="button button--ghost"
+                  disabled={recentMarketBusy}
+                  onClick={() => void refreshRecentMarketEntries(true)}
+                  type="button"
+                >
+                  {recentMarketBusy ? '更新中⋯' : '重新整理最近更新'}
+                </button>
+              </div>
+              {recentMarketBusy ? (
+                <div className="callout">
+                  <span className="callout-title">市場摘要更新中</span>
+                  <span className="callout-body">正在取得最近上傳的市場物品與道具名稱。</span>
+                </div>
+              ) : recentMarketError ? (
+                <div className="callout callout--error">
+                  <span className="callout-title">載入失敗</span>
+                  <span className="callout-body">{recentMarketError}</span>
+                </div>
+              ) : recentMarketEntries.length === 0 ? (
+                <div className="empty-state">
+                  <strong>目前沒有最近更新資料</strong>
+                  <p>請稍後重試，或切換另一個伺服器查看對應資料中心。</p>
+                </div>
+              ) : (
+                <div className="history-list">
+                  {recentMarketEntries.map((entry) => (
+                    <article key={`${entry.itemRowId}-${entry.lastUploadTime}`} className="history-item">
+                      <div className="history-item__top">
+                        <strong>{entry.itemName}</strong>
+                        <span className="badge badge--positive">{formatRelativeTime(entry.lastUploadTime)}</span>
+                      </div>
+                      <div className="detail-list">
+                        <div><strong>更新世界：</strong>{entry.worldName}</div>
+                        <div><strong>更新時間：</strong>{formatShortDateTime(entry.lastUploadTime)}</div>
+                      </div>
+                      <div className="button-row">
+                        <button
+                          className="button button--ghost"
+                          onClick={() => openMarketDetail(entry.itemRowId, entry.itemName, detailTargetServer)}
+                          type="button"
+                        >
+                          查看單品詳情
+                        </button>
+                      </div>
+                    </article>
+                  ))}
                 </div>
               )}
             </article>

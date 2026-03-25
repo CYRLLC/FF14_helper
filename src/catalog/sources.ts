@@ -146,7 +146,21 @@ export const pageSources: Record<string, PageSourceBundle> = {
         name: 'FFXIV Market (beherw)',
         url: 'https://beherw.github.io/FFXIV_Market/',
         category: 'inspiration',
-        note: 'OCR 匯入、比價工作表與最近更新摘要的主要參考來源。',
+        note: 'OCR 匯入、搜尋中心、單品市場面板與最近更新工作流的主要參考來源。',
+      },
+      {
+        id: 'market-universalis',
+        name: 'Universalis API',
+        url: 'https://universalis.app/',
+        category: 'data',
+        note: '單品市場資料、批次比價與最近更新物品清單的主要資料來源。',
+      },
+      {
+        id: 'market-xivapi',
+        name: 'XIVAPI Docs',
+        url: 'https://v2.xivapi.com/docs',
+        category: 'data',
+        note: '道具名稱補完、配方搜尋與道具詳情補查所使用的公開 API 文件。',
       },
       {
         id: 'market-tesseract',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildXivapiEquipmentSearchUrl,
   buildXivapiRecipeSearchUrl,
   buildXivapiSearchUrl,
   buildXivapiSheetRowUrl,
@@ -32,5 +33,14 @@ describe('xivapi urls', () => {
     expect(url).toContain('https://v2.xivapi.com/api/sheet/Recipe/5604?')
     expect(url).toContain('language=en')
     expect(url).toContain('fields=ItemResult.Name%2CRecipeLevelTable.Difficulty')
+  })
+
+  it('builds an equipment search URL for item level and category filters', () => {
+    const url = buildXivapiEquipmentSearchUrl(120, { categoryQuery: 'ItemUICategory=34', limit: 80 })
+
+    expect(url).toContain('sheets=Item')
+    expect(url).toContain('fields=Name%2CLevelItem%2CLevelEquip%2CItemUICategory.Name%2CClassJobCategory.Name%2CIsUntradable')
+    expect(url).toContain('limit=80')
+    expect(url).toContain('query=LevelItem%3D120+LevelEquip%3E%3D1+ItemUICategory%3D34')
   })
 })

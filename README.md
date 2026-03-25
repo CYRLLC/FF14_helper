@@ -17,6 +17,7 @@ Core pages are already usable, but copy, workflow details, solver quality, and U
 
 - Detailed roadmap and execution blueprint: [`docs/project-blueprint.zh-TW.md`](docs/project-blueprint.zh-TW.md)
 - Tool integration and feature parity spec: [`docs/integration-spec.zh-TW.md`](docs/integration-spec.zh-TW.md)
+- Market parity and expansion spec: [`docs/market-parity-spec.zh-TW.md`](docs/market-parity-spec.zh-TW.md)
 
 ## Current Feature Set
 

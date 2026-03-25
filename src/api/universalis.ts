@@ -41,6 +41,24 @@ interface UniversalisBatchRawResponse {
   unresolvedItems?: number[]
 }
 
+interface UniversalisRecentUpdateRaw {
+  itemID?: number
+  lastUploadTime?: number
+  worldID?: number
+  worldName?: string
+}
+
+interface UniversalisRecentUpdatesResponse {
+  items?: UniversalisRecentUpdateRaw[]
+}
+
+export interface UniversalisRecentUpdate {
+  itemId: number
+  lastUploadTime: number
+  worldId?: number
+  worldName: string
+}
+
 function sanitizeScopeKey(scopeKey: string): string {
   return encodeURIComponent(scopeKey.trim())
 }
@@ -90,6 +108,15 @@ export function buildUniversalisUrl(
   })
 
   return `${UNIVERSALIS_BASE_URL}/${sanitizeScopeKey(scope.scopeKey)}/${safeItemId}?${params.toString()}`
+}
+
+export function buildUniversalisRecentUpdatesUrl(dataCenter: string, entries = 10): string {
+  const params = new URLSearchParams({
+    dcName: dataCenter.trim(),
+    entries: Math.max(1, Math.min(50, Math.round(entries))).toString(),
+  })
+
+  return `${UNIVERSALIS_BASE_URL}/extra/stats/most-recently-updated?${params.toString()}`
 }
 
 /** 批次查詢多個道具在指定伺服器的市場板資料。回傳每個 itemId 的快照 Map 與不可交易的 itemId 集合。*/
@@ -177,4 +204,29 @@ export async function fetchUniversalisMarket(
     recentHistory,
     fetchedAt: new Date().toISOString(),
   }
+}
+
+export async function fetchMostRecentlyUpdatedItems(
+  dataCenter: string,
+  entries = 10,
+): Promise<UniversalisRecentUpdate[]> {
+  const response = await fetch(buildUniversalisRecentUpdatesUrl(dataCenter, entries))
+
+  if (!response.ok) {
+    throw new Error(`Universalis recent updates request failed with HTTP ${response.status}.`)
+  }
+
+  const payload = (await response.json()) as UniversalisRecentUpdatesResponse
+
+  return (payload.items ?? [])
+    .filter(
+      (entry): entry is Required<Pick<UniversalisRecentUpdateRaw, 'itemID' | 'lastUploadTime'>> & UniversalisRecentUpdateRaw =>
+        typeof entry.itemID === 'number' && typeof entry.lastUploadTime === 'number',
+    )
+    .map((entry) => ({
+      itemId: entry.itemID,
+      lastUploadTime: entry.lastUploadTime,
+      worldId: typeof entry.worldID === 'number' ? entry.worldID : undefined,
+      worldName: entry.worldName?.trim() || 'Unknown World',
+    }))
 }
